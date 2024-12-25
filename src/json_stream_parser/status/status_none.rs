@@ -48,7 +48,7 @@ impl StatusTrait for StatusNone {
         }
     }
     
-    fn flush(&mut self) -> Option<Vec<u8>> {
+    fn flush(&mut self) -> Option<String> {
         None
     }
     

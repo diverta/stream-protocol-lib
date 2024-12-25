@@ -46,7 +46,7 @@ impl StatusTrait for StatusBool {
         }
     }
 
-    fn flush(&mut self) -> Option<Vec<u8>> {
+    fn flush(&mut self) -> Option<String> {
         None
     }
     

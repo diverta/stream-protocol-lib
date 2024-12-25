@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct ParseError {
     pub msg: String
 }
@@ -11,6 +12,7 @@ impl ParseError {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct LogicalError {
     msg: String
 }

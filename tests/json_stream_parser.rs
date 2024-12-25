@@ -1,44 +1,7 @@
 use test_log::test;
-use std::{cell::RefCell, pin::Pin, rc::Rc, string::FromUtf8Error, task::Poll};
+use std::{cell::RefCell, rc::Rc};
 
-use futures::{executor::block_on, AsyncWrite, AsyncWriteExt};
 use stream_protocol_lib::{json_stream_parser::JsonStreamParser, ref_index_generator::RefIndexGenerator};
-
-struct WriteSample {
-    buf: Rc<RefCell<Vec<u8>>>
-}
-
-impl WriteSample {
-    pub fn new(buf: Rc<RefCell<Vec<u8>>>) -> Self {
-        Self {
-            buf
-        }
-    }
-    pub fn get_buffer(&self) -> Result<String, FromUtf8Error> {
-        let buf = self.buf.borrow_mut();
-        String::from_utf8(buf.to_vec())
-    }
-}
-
-impl AsyncWrite for WriteSample {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut self_buf = self.buf.borrow_mut();
-        self_buf.extend(buf);
-        return Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-}
 
 #[test]
 fn test_unit() {
@@ -82,8 +45,12 @@ fn test_unit() {
             r#"["a","b"]"#,
             r#"
 2=[]
-2+="a"
-2+="b"
+2+="$ke$3"
+3=""
+3+="a"
+2+="$ke$4"
+4=""
+4+="b"
             "#.trim()
         ),
         (
@@ -92,7 +59,9 @@ fn test_unit() {
             }"#,
             r#"
 2={}
-2+={"a":"b"}
+2+={"a":"$ke$4"}
+4=""
+4+="b"
             "#.trim()
         ),
         (
@@ -105,7 +74,9 @@ fn test_unit() {
 4={}
 4+={"nested":"$ke$6"}
 6={}
-6+={"object":"is ok ?"}
+6+={"object":"$ke$8"}
+8=""
+8+="is ok ?"
             "#.trim()
         ),
         (
@@ -128,8 +99,12 @@ fn test_unit() {
 2={}
 2+={"arr":"$ke$4"}
 4=[]
-4+="a"
-4+="b"
+4+="$ke$5"
+5=""
+5+="a"
+4+="$ke$6"
+6=""
+6+="b"
             "#.trim()
         ),
         (
@@ -140,7 +115,9 @@ fn test_unit() {
 2={}
 2+={"parent":"$ke$4"}
 4={}
-4+={"child":"kid"}
+4+={"child":"$ke$6"}
+6=""
+6+="kid"
             "#.trim()
         ),
         (
@@ -152,10 +129,14 @@ fn test_unit() {
 2=[]
 2+="$ke$3"
 3={}
-3+={"first_key":"first_val"}
+3+={"first_key":"$ke$5"}
+5=""
+5+="first_val"
 2+="$ke$6"
 6={}
-6+={"second_key":"second_val"}
+6+={"second_key":"$ke$8"}
+8=""
+8+="second_val"
             "#.trim()
         ),
         (
@@ -172,9 +153,15 @@ fn test_unit() {
 3+=3
 2+="$ke$7"
 7=[]
-7+="a"
-7+="b"
-7+="c"
+7+="$ke$8"
+8=""
+8+="a"
+7+="$ke$9"
+9=""
+9+="b"
+7+="$ke$10"
+10=""
+10+="c"
             "#.trim()
         ),
         ( // There is a difference in processing logic with direct parent returns after numbers
@@ -191,9 +178,15 @@ fn test_unit() {
 3+=3
 2+="$ke$7"
 7=[]
-7+="a"
-7+="b"
-7+="c"
+7+="$ke$8"
+8=""
+8+="a"
+7+="$ke$9"
+9=""
+9+="b"
+7+="$ke$10"
+10=""
+10+="c"
             "#.trim()
         ),
         ( // There is a difference in processing logic with direct parent returns after numbers
@@ -208,7 +201,9 @@ fn test_unit() {
 5=[]
 5+="$ke$6"
 6={}
-6+={"inner_inner_obj":"val"}
+6+={"inner_inner_obj":"$ke$8"}
+8=""
+8+="val"
             "#.trim()
         )
     ];
@@ -217,22 +212,18 @@ fn test_unit() {
         println!("Running test {idx}...");
         let ref_index_generator = RefIndexGenerator::new();
         let buffer: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
-        let output = WriteSample::new(Rc::clone(&buffer));
     
         ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
         let cnt = ref_index_generator.generate(); // 2
         
-        let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, output, cnt);
+        let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
 
-        let mut writer_wrapper = Pin::new(&mut json_stream_parser);
         let expected_line_arr: Vec<&str> = expected_lines.split('\n').collect();
         
         let mut line_counter = 0;
         for byte in input.as_bytes() {
-            block_on(async {
-                let resp = writer_wrapper.write(&[*byte]).await;
-                assert!(resp.is_ok());
-            });
+            let resp = json_stream_parser.add_char(byte);
+            assert!(resp.is_ok());
         
             let mut buffer_b = buffer.borrow_mut();
             if buffer_b.len() > 0 {
@@ -252,43 +243,150 @@ fn test_unit() {
 }
 
 #[test]
-fn test_flush() {
+fn test_flush_regular() {
     let ref_index_generator = RefIndexGenerator::new();
-    let buffer: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
-    let output = WriteSample::new(Rc::clone(&buffer));
+    ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
+    let cnt = ref_index_generator.generate(); // 2
+    
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+    
+    let input = r#"{"key":"Some longer sentence"}"#;
+    let expected_line_arr = [
+        "2={}",
+        r#"2+={"key":"$ke$4"}"#,
+        "4=\"\"",
+        "4+=\"Some \"",
+        "4+=\"longer \"",
+        "4+=\"sentence\"",
+    ];
+
+    let mut line_counter = 0usize;
+    for byte in input.as_bytes() {
+        let resp = json_stream_parser.add_char(byte);
+        assert!(resp.is_ok());
+        let mut output = resp.unwrap();
+
+        if byte == &b' ' {
+            assert!(output.is_none());
+            output = json_stream_parser.flush();
+        }
+        if output.is_some() {
+            // Every non empty buffer is a line (or more) to test
+            let output_rows = output.unwrap();
+            // Sometimes output contains multiple rows
+            let output_row_arr = output_rows.trim().split('\n');
+            for output_row in output_row_arr {
+                assert_eq!(expected_line_arr[line_counter], output_row);
+                line_counter += 1;
+            }
+        }
+    }
+}
+
+#[test]
+fn test_flush_inbetween_utf8_boundaries() {
+    let ref_index_generator = RefIndexGenerator::new();
 
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, output, cnt);
-
-    let mut writer_wrapper = Pin::new(&mut json_stream_parser);
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
     
-    let input = r#"{"key":"Some longer sentence"}"#;
+    let input = r#""東京都飯田橋""#;
+    let expected_line_arr = [
+        r#"2="""#,
+        r#"2+="東""#,
+        r#"2+="京""#,
+        r#"2+="都""#,
+        r#"2+="飯""#,
+        r#"2+="田""#,
+        r#"2+="橋""#,
+    ];
 
+    let mut line_counter = 0usize;
     for byte in input.as_bytes() {
-        block_on(async {
-            let resp = writer_wrapper.write(&[*byte]).await;
-            assert!(resp.is_ok());
-        });
+        let resp = json_stream_parser.add_char(byte);
+        assert!(resp.is_ok());
+        //println!("{} ==> {}", std::ascii::escape_default(*byte), String::from_utf8(buffer_b.to_vec()).unwrap());
 
-        let mut buffer_b = buffer.borrow_mut();
-        let output_rows = String::from_utf8(buffer_b.to_vec()).unwrap();
-        println!("{} ==> {}", std::ascii::escape_default(*byte), String::from_utf8(buffer_b.to_vec()).unwrap());
-
-        let expected = [
-            "4+=\"Some \"",
-            "4+=\"longer \"",
-            "4+=\"sentence\"",
-        ];
-        let mut counter = 0;
-        if byte == &b' ' {
-            assert!(buffer_b.len() == 0);
-            block_on(async {
-                assert!(writer_wrapper.flush().await.is_ok());
-            });
-            counter += 1;
+        // First test the regular output
+        let output = resp.unwrap();
+        if output.is_some() {
+            let output = output.unwrap();
+            assert_eq!(expected_line_arr[line_counter], output.trim());
+            line_counter += 1;
         }
-        buffer_b.clear(); // Simulate dumping the line
+
+        // Then, flush after every byte and test if we have the next line
+        let output = json_stream_parser.flush();
+
+        if output.is_some() {
+            let output = output.unwrap();
+            assert_eq!(expected_line_arr[line_counter], output.trim());
+            line_counter += 1;
+        }
+    }
+}
+
+#[test]
+fn test_flush_for_object_keys() {
+    let ref_index_generator = RefIndexGenerator::new();
+
+    ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
+    let cnt = ref_index_generator.generate(); // 2
+    
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+    let inputs = [
+        r#"{""#,
+        r#"h"#,
+        r#"1"#,
+        r#"":""#,
+        r#"da"#,
+        r#"ta"#,
+        r#""}"#,
+    ];
+
+    for input in inputs {
+        for byte in input.as_bytes() {
+            if let Ok(Some(regular_output)) = json_stream_parser.add_char(&byte) {
+                println!(" >> REG: {}", regular_output);
+            }
+        }
+        if let Some(flushed_output) = json_stream_parser.flush() {
+            println!(" >> FLU: {}", flushed_output);
+        }
+    }
+}
+
+#[test]
+fn test_gpt() {
+    let ref_index_generator = RefIndexGenerator::new();
+
+    ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
+    let cnt = ref_index_generator.generate(); // 2
+    
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+    let inputs = [
+        r#"{"references"#,
+        r#"":[""#,
+        r#"source"#,
+        r#"_"#,
+        r#"1"#,
+        r#"",""#,
+        r#"source"#,
+        r#"_"#,
+        r#"2"#,
+        r#""]}"#,
+    ];
+
+    for input in inputs {
+        for byte in input.as_bytes() {
+            if let Ok(Some(regular_output)) = json_stream_parser.add_char(&byte) {
+                println!(" >> REG: {}", regular_output);
+            }
+        }
+        if let Some(flushed_output) = json_stream_parser.flush() {
+            println!(" >> FLU: {}", flushed_output);
+        }
     }
 }

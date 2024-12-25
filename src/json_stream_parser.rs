@@ -1,8 +1,6 @@
-use std::{io::Error, task::Poll};
-
-use futures::AsyncWrite;
+use derivative::Derivative;
+use error::ParseError;
 use partial_json_protocol_mapper::PartialJsonProtocolMapper;
-use pin_project::pin_project;
 use status::{Status, StatusTrait};
 
 use crate::{byte_to_char, ref_index_generator::RefIndexGenerator};
@@ -12,6 +10,10 @@ pub(crate) mod error;
 pub(crate) mod partial_json_protocol_mapper;
 pub(crate) mod status;
 
+#[cfg( feature = "async" )] use std::{io::Error, task::Poll};
+#[cfg( feature = "async" )] use futures::AsyncWrite;
+#[cfg( feature = "async" )] use pin_project::pin_project;
+#[cfg( feature = "async" )]
 #[pin_project]
 pub struct JsonStreamParser<W> {
     mapper: PartialJsonProtocolMapper,
@@ -21,6 +23,47 @@ pub struct JsonStreamParser<W> {
     writer: W,
 }
 
+#[cfg(not(feature = "async" ))]
+#[derive(Derivative)]
+#[derivative(Debug)]
+pub struct JsonStreamParser {
+    #[derivative(Debug="ignore")]
+    mapper: PartialJsonProtocolMapper,
+}
+
+
+#[cfg( not(feature = "async") )]
+impl JsonStreamParser {
+    pub fn new(ref_index_generator: RefIndexGenerator, current_node_index: usize) -> JsonStreamParser {
+        JsonStreamParser {
+            mapper: PartialJsonProtocolMapper::new(ref_index_generator, current_node_index)
+        }
+    }
+
+    #[inline]
+    pub fn add_char(&mut self, c: &u8) -> Result<Option<String>, ParseError> {
+        match self.mapper.add_char(c) {
+            Ok(Some(output)) => {
+                Ok(Some(output.into()))
+            }
+            Ok(None) => {
+                // Not ready to write the line yet, do nothing
+                Ok(None)
+            }
+            Err(err) => {
+                log::error!("JSON parse error at character '{}' : {}", byte_to_char(c), err.msg);
+                Err(err)
+            },
+        }
+    }
+
+    #[inline]
+    pub fn flush(&mut self) -> Option<String> {
+        self.mapper.flush()
+    }
+}
+
+#[cfg(feature = "async")]
 impl<W> JsonStreamParser<W>
 where W: AsyncWrite {
     pub fn new(ref_index_generator: RefIndexGenerator, writer: W, current_node_index: usize) -> JsonStreamParser<W> {
@@ -31,13 +74,9 @@ where W: AsyncWrite {
             writer
         }
     }
-
-    /// Call it when a bytes buffer has been exhausted, and a pause is expected before receiving the next buffer
-    pub fn flush(&self) {
-
-    }
 }
 
+#[cfg( feature = "async" )]
 impl<W> AsyncWrite for JsonStreamParser<W>
 where W: AsyncWrite {
     fn poll_write(
@@ -68,7 +107,7 @@ where W: AsyncWrite {
     fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
         let this = self.project();
         if let Some(out) = this.mapper.flush() {
-            this.writer.poll_write(cx, &out).map(|result| result.map(|_| (())))
+            this.writer.poll_write(cx, out.as_bytes()).map(|result| result.map(|_| (())))
         } else {
             Poll::Ready(Ok(()))
         }

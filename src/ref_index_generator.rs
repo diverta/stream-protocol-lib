@@ -1,7 +1,7 @@
 use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 // Cheaply clonable struct that manages unique references
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct RefIndexGenerator {
     internal_counter: Rc<RefCell<usize>>,
 }

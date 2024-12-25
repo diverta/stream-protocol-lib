@@ -1,5 +1,5 @@
-use std::{collections::HashMap, task::Poll, thread, time::Duration};
-
+use std::{collections::HashMap, time::Duration};
+use std::{task::Poll, thread};
 use futures::Stream;
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
@@ -28,6 +28,7 @@ pub struct JsonProtocolChunkIter {
     buf_size: usize,
 }
 
+#[allow(unused)]
 pub struct JsonProtocolChunkStream {
     chunker: JsonProtocolChunkIter,
     sleep_duration: Duration,

@@ -31,8 +31,8 @@ impl StatusTrait for StatusObject {
                         return Ok(None)
                     },
                     b'"' => {
-                        // Beginning of a new value as a String
-                        return Ok(Some((Some(Value::String(String::new())), Some(Status::String(StatusString::new())))))
+                        // Beginning of a new key as a String
+                        return Ok(Some((Some(Value::String(String::new())), Some(Status::String(StatusString::new().with_object_key())))))
                     },
                     b',' => {
                         if !comma_matched {
@@ -98,7 +98,7 @@ impl StatusTrait for StatusObject {
         }
     }
 
-    fn flush(&mut self) -> Option<Vec<u8>> {
+    fn flush(&mut self) -> Option<String> {
         None
     }
     
