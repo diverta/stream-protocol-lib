@@ -367,7 +367,8 @@ fn test_gpt() {
     
     let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
     let inputs = [
-        r#"{"references"#,
+        r#"{"#,
+        r#""references"#,
         r#"":[""#,
         r#"source"#,
         r#"_"#,
@@ -376,17 +377,45 @@ fn test_gpt() {
         r#"source"#,
         r#"_"#,
         r#"2"#,
-        r#""]}"#,
+        r#""],"#,
+        r#""test_inner_json":"{\"inner_key\":\"inner_value\"}""#,
+        r#""test_escape":"line\ntab\tend""#,
+        r#""test_unicode":"\u2764\u2765""#,
+        "}"
     ];
 
-    for input in inputs {
+    let expected = [
+        format!("{}\n", r#"2={}"#),
+        format!("{}\n{}\n", r#"2+={"references":"$ke$4"}"#, "4=[]"), // Sometimes init happens immediately
+        format!("{}\n{}\n", r#"4+="$ke$5""#, "5=\"\""),
+        format!("{}\n", r#"5+="source""#),
+        format!("{}\n", r#"5+="_""#),
+        format!("{}\n", r#"5+="1""#),
+        format!("{}\n{}\n", r#"4+="$ke$6""#, "6=\"\""),
+        format!("{}\n", r#"6+="source""#),
+        format!("{}\n", r#"6+="_""#),
+        format!("{}\n", r#"6+="2""#),
+        format!("{}\n{}\n", r#"2+={"test_inner_json":"$ke$8"}"#, "8=\"\""),
+        format!("{}\n", r#"8+="{\"inner_key\":\"inner_value\"}""#),
+        format!("{}\n{}\n", r#"2+={"test_escape":"$ke$10"}"#, "10=\"\""),
+        format!("{}\n", r#"10+="line\ntab\tend""#), // These were escaped once, and re-JSONified for the protocol output
+        format!("{}\n{}\n", r#"2+={"test_unicode":"$ke$12"}"#, "12=\"\""),
+        format!("{}\n", r#"12+="❤❥""#), // Same here
+    ];
+
+    let mut i = 0;
+    for input in &inputs {
         for byte in input.as_bytes() {
             if let Ok(Some(regular_output)) = json_stream_parser.add_char(&byte) {
-                println!(" >> REG: {}", regular_output);
+                assert!(i < expected.len());
+                assert_eq!(regular_output, expected[i]);
+                i += 1;
             }
         }
         if let Some(flushed_output) = json_stream_parser.flush() {
-            println!(" >> FLU: {}", flushed_output);
+            assert!(i < expected.len());
+            assert_eq!(flushed_output, expected[i]);
+            i += 1;
         }
     }
 }

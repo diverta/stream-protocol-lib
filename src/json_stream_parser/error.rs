@@ -26,6 +26,22 @@ impl LogicalError {
     }
 }
 
+impl From<String> for ParseError {
+    fn from(msg: String) -> Self {
+        Self {
+            msg
+        }
+    }
+}
+
+impl From<&str> for ParseError {
+    fn from(msg: &str) -> Self {
+        Self {
+            msg: msg.to_string()
+        }
+    }
+}
+
 impl From<std::string::FromUtf8Error> for ParseError {
     fn from(_: std::string::FromUtf8Error) -> Self {
         Self {

@@ -42,7 +42,6 @@ impl PartialJsonProtocolMapper {
         if self.is_done {
             return Ok(None);
         }
-        //println!("ADD '{}'at idx={} {:?}", byte_to_char(c), self.current_node_idx, self.current_status);
         let add_char_to_status_result = self.current_status.add_char(c)?;
         if add_char_to_status_result.is_none()  {
             // Current status has absorbed the character and is maintained, no outside status change

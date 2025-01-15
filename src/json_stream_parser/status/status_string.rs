@@ -7,8 +7,15 @@ use super::{Status, StatusTrait};
 #[derive(Debug)]
 pub(crate) struct StatusString {
     string_in_progress: Vec<u8>,
-    is_escaping: bool,
+    escape: EscapeState,
     is_object_key: bool,
+}
+
+#[derive(Debug)]
+pub(crate) enum EscapeState {
+    None, // Not escaping
+    Began, // After \ is detected
+    U(String) // UTF8 digits (up to 4)
 }
 
 impl StatusString {
@@ -22,14 +29,14 @@ impl StatusTrait for StatusString {
     fn new() -> Self {
         Self {
             string_in_progress: Vec::new(),
-            is_escaping: false,
+            escape: EscapeState::None,
             is_object_key: false
         }
     }
 
     fn add_char(&mut self, c: &u8) -> Result<Option<(Option<Value>, Option<Status>)>, ParseError> {
-        match (self.is_escaping, c) {
-            (false, b'"') => {
+        match (&mut self.escape, c) {
+            (EscapeState::None, b'"') => {
                 // String end
                 if self.string_in_progress.len() > 0 {
                     let mut out_vec = Vec::<u8>::new(); // To be swapped with current data, since that one is no longer needed after this return
@@ -41,14 +48,76 @@ impl StatusTrait for StatusString {
                     return Ok(Some((None, Some(Status::Done(super::StatusDone::default())))))
                 }
             },
-            (false, b'\\') => {
-                self.is_escaping = true;
+            (EscapeState::None, b'\\') => {
+                self.escape = EscapeState::Began;
                 return Ok(None);
             },
-            (true, _) => {
-                todo!()
+            (EscapeState::Began, escaped_char) => {
+                // Exhaustive escape pattern matching based on the page 5 of the following document :
+                // https://ecma-international.org/wp-content/uploads/ECMA-404.pdf
+                match escaped_char {
+                    b'"' // quotation mark
+                    | b'\\' // reverse solidus
+                    | b'/' // solidus
+                    => {
+                        // Push the character as is
+                        self.string_in_progress.push(*escaped_char);
+                        self.escape = EscapeState::None;
+                        return Ok(None);
+                    }
+                    b'b' // backspace
+                    | b'f' // form feed
+                    => {
+                        // Silently absorb these
+                        self.escape = EscapeState::None;
+                        return Ok(None);
+                    }
+                    b'n' => { // newline
+                        self.string_in_progress.push(b'\n');
+                        self.escape = EscapeState::None;
+                        return Ok(None);
+                    }
+                    b'r' => { // carriage return
+                        self.string_in_progress.push(b'\r');
+                        self.escape = EscapeState::None;
+                        return Ok(None);
+                    }
+                    b't' => { // tab
+                        self.string_in_progress.push(b'\t');
+                        self.escape = EscapeState::None;
+                        return Ok(None);
+                    }
+                    b'u' => { // Beginning of UTF8 capture
+                        self.escape = EscapeState::U(String::with_capacity(4));
+                        return Ok(None);
+                    }
+                    _ => return Err("Invalid JSON escaped character".into())
+                }
             },
-            _ => {
+            (EscapeState::U(digits_so_far), escaped_char) => {
+                match digits_so_far.len() {
+                    0 | 1 | 2 => {
+                        // Non-final character absorb
+                        digits_so_far.push(*escaped_char as char);
+                        return Ok(None);
+                    },
+                    3 => {
+                        // Last digit capture
+                        digits_so_far.push(*escaped_char as char);
+                        let Some(utf8_char) = u32::from_str_radix(&digits_so_far, 16)
+                            .ok()
+                            .and_then(|input_base10| {
+                                char::from_u32(input_base10)
+                            })
+                            else { return Err(format!("JSON contains invalid UTF digits : \\u{}", &digits_so_far).into()) };
+                        self.string_in_progress.extend_from_slice(utf8_char.to_string().as_bytes());                    
+                        self.escape = EscapeState::None;
+                        return Ok(None);
+                    },
+                    _ => return Err("Escapted JSON UTF8 has detected more than 4 digits".into())
+                }
+            },
+            (EscapeState::None, _) => {
                 self.string_in_progress.push(*c);
                 return Ok(None);
             }
