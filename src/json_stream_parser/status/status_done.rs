@@ -1,10 +1,10 @@
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 /// Struct needed to store a couple of params along with being Done parsing the subitem
 pub(crate) struct StatusDone {
-    pub(crate) done_object: bool, // True if done on detecting '}'
-    pub(crate) done_array: bool, // True if done on detecting ']'
-    pub(crate) comma_matched: bool, // True if done on detecting ','
+    pub(crate) done_object: bool, // True if done on detecting '}' as inner value stop condition (currently only needed for Number) to double up
+    pub(crate) done_array: bool, // True if done on detecting ']' as inner value stop condition (currently only needed for Number) to double up
+    pub(crate) comma_matched: bool, // True if done on detecting ',' as inner value stop condition (currently only needed for Number) to double up
 }
 
 impl StatusDone {

@@ -2,7 +2,7 @@
 #[derive(Debug)]
 pub(crate) enum NodeType {
     Object(Option<String>), // The parameter is a potential key. If exists, then when returning from a subobject, we know that we are dealing with a string key
-    Array,
+    Array(usize), // Counting indices
     Basic // A basic type for non-containers
 }
 

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use crate::{json_stream_parser::status::status_array::StatusArray, ref_index_generator::RefIndexGenerator, OPERATOR_APPEND, OPERATOR_ASSIGN, STREAM_VAR_PREFIX};
+use crate::{json_key_path::JsonKeyPath, json_stream_parser::status::status_array::StatusArray, ref_index_generator::RefIndexGenerator, OPERATOR_APPEND, OPERATOR_ASSIGN, STREAM_VAR_PREFIX};
 
 use node::{Node, NodeType};
-use serde_json::json;
+use serde_json::{json, Value};
 
-use super::{error::ParseError, status::{status_none::StatusNone, status_object::{StatusObject, SubStatusObject}}, Status, StatusTrait};
+use super::{error::ParseError, status::{status_none::StatusNone, status_object::{StatusObject, SubStatusObject}}, ParserEvent, Status, StatusTrait};
 
 mod node;
 
@@ -14,22 +14,75 @@ mod node;
 /// 
 /// Note: this makes most straighforward use of the protocol
 pub(crate) struct PartialJsonProtocolMapper {
+    key_path: JsonKeyPath,
     ref_index_generator: RefIndexGenerator,
     node_map: HashMap<usize, Node>,
     current_node_idx: usize,
     current_status: Status,
-    is_done: bool
+    event_map: HashMap<ParserEvent, HashMap<String,Vec<fn(Option<&Value>) -> ()>>>,
+    is_done: bool,
+    string_value_buffer: String, // Storing the string buffer that persists across flushes. Used by events
 }
 
 impl PartialJsonProtocolMapper {
     pub(crate) fn new(ref_index_generator: RefIndexGenerator, current_node_idx: usize) -> Self {
         Self {
+            key_path: JsonKeyPath::new(),
             ref_index_generator,
             node_map: HashMap::new(),
             current_status: Status::None(StatusNone {}),
             current_node_idx,
-            is_done: false
+            event_map: HashMap::new(),
+            is_done: false,
+            string_value_buffer: String::new()
         }
+    }
+
+    fn on_event_move_down(&mut self, key: &str) {
+        self.key_path.move_down_object_or_array(key);
+        // Register element begin events
+        if let Some(list_maps_for_event) = self.event_map.get(&ParserEvent::OnElementBegin) {
+            for event_key in list_maps_for_event.keys() {
+                if self.key_path.match_expr(event_key) {
+                    let event_fns = list_maps_for_event.get(event_key).unwrap();
+                    for event_fn in event_fns {
+                        event_fn(None);
+                    }
+                }
+            }
+        }
+        // If string, clear buffer
+        match &self.current_status {
+            Status::String(_) => {
+                if self.string_value_buffer.len() > 0 {
+                    self.string_value_buffer.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_event_move_up(&mut self, value: Option<&Value>) {
+        if let Some(list_maps_for_event) = self.event_map.get(&ParserEvent::OnElementEnd) {
+            for event_key in list_maps_for_event.keys() {
+                if self.key_path.match_expr(event_key) {
+                    let event_fns = list_maps_for_event.get(event_key).unwrap();
+                    for event_fn in event_fns {
+                        // If string, use the buffer
+                        // Since we don't store previous node data, we can use the buffer to check whether we have been buffering a string
+                        if self.string_value_buffer.len() > 0 {
+                            // No choice but to clone the buffer if we want to support having several references to the same element
+                            let string_value = self.string_value_buffer.clone();
+                            event_fn(Some(&Value::String(string_value)));
+                        } else {
+                            event_fn(value);
+                        }
+                    }
+                }
+            }
+        }
+        self.string_value_buffer.clear();
+        self.key_path.move_up();
     }
 
     #[inline]
@@ -59,7 +112,7 @@ impl PartialJsonProtocolMapper {
                         NodeType::Object(None)
                     },
                     Some(Status::Array(_)) => {
-                        NodeType::Array
+                        NodeType::Array(0)
                     },
                     _ => NodeType::Basic
                 };
@@ -75,9 +128,15 @@ impl PartialJsonProtocolMapper {
             // A status has been completed
             (current_status, Some(Status::Done(status_done))) => {
                 let current_node = self.node_map.get(&self.current_node_idx);
+
+                if let Some(Value::String(val)) = output_value.as_ref() {
+                    // Push output string into buffer before any potential self.on_event_move_up
+                    self.string_value_buffer.push_str(val);
+                }
                 if current_node.is_none() {
                     // Parent object finished
                     self.is_done = true;
+                    // self.on_event_move_up(output_value.as_ref()); Needed ?
                     return Ok(None);
                 };
                 let current_node = current_node.unwrap();
@@ -90,6 +149,7 @@ impl PartialJsonProtocolMapper {
                         Status::Null(_) | Status::Bool(_) | Status::Number(_) => OPERATOR_ASSIGN,
                         _ => OPERATOR_APPEND
                     };
+                    // self.on_event_move_up(output_value.as_ref()); Needed ?
                     return Ok(output_value.map(|output| {
                         self.make_row(self.current_node_idx, operator, output.to_string())
                     }));
@@ -104,6 +164,7 @@ impl PartialJsonProtocolMapper {
                 if parent_node.is_none() {
                     // The parent node (which is now current) doesn't exist : we are done
                     // This should only happen for a top level basic json type (string, number, null, bool)
+                    self.on_event_move_up(output_value.as_ref());
                     return Ok(
                         output_value.map(|output|
                             self.make_row(
@@ -132,7 +193,7 @@ impl PartialJsonProtocolMapper {
                                         Status::Null(_)|
                                         Status::Bool(_) |
                                         Status::Number(_) => {
-                                            let value = output_value.unwrap(); // A basic type, when Done, absolutely returns a value
+                                            let value = output_value.as_ref().unwrap(); // A basic type, when Done, absolutely returns a value
                                             Some(self.make_row(
                                                 parent_idx,
                                                 OPERATOR_APPEND,
@@ -141,7 +202,7 @@ impl PartialJsonProtocolMapper {
                                         },
                                         // For strings, we have already initialized it, so append to self
                                         Status::String(_) => {
-                                            if let Some(value) = output_value {
+                                            if let Some(value) = output_value.as_ref() {
                                                 if value.as_str().unwrap().len() > 0 {
                                                     Some(self.make_row(
                                                         current_idx,
@@ -161,6 +222,7 @@ impl PartialJsonProtocolMapper {
                                     self.current_status = Status::Object(StatusObject {
                                         substatus: SubStatusObject::BeforeKV(false)
                                     });
+                                    self.on_event_move_up(output_value.as_ref());
                                     if status_done.done_object {
                                         // Not only the value is completed, but the current object must be too : go back up once again
                                         self.move_up();
@@ -176,14 +238,14 @@ impl PartialJsonProtocolMapper {
                                     return Ok(None);
                                 }
                             },
-                            node::NodeType::Array => {
+                            node::NodeType::Array(_) => {
                                 let row = match current_status {
                                     // The way to write the row, however, depends on the type
                                     // Basic types, we have to append to the parent object itself
                                     Status::Null(_)|
                                     Status::Bool(_) |
                                     Status::Number(_) => {
-                                        let value = output_value.unwrap();
+                                        let value = output_value.as_ref().unwrap();
                                         Some(self.make_row(
                                             parent_idx,
                                             OPERATOR_APPEND,
@@ -192,7 +254,7 @@ impl PartialJsonProtocolMapper {
                                     },
                                     // For strings, we have already initialized it, so append to self
                                     Status::String(_) => {
-                                        if let Some(value) = output_value {
+                                        if let Some(value) = output_value.as_ref() {
                                             if value.as_str().unwrap().len() > 0 {
                                                 Some(self.make_row(
                                                     current_idx,
@@ -209,6 +271,7 @@ impl PartialJsonProtocolMapper {
                                     _ => unreachable!("All base types are covered, aren't they?")
                                 };
                                 self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
+                                self.on_event_move_up(output_value.as_ref());
                                 if status_done.done_array {
                                     // Not only the value is completed, but the current array must be too
                                     // => go back up once again
@@ -226,11 +289,13 @@ impl PartialJsonProtocolMapper {
                         match &mut parent_node.node_type {
                             NodeType::Object(ref mut potential_key) => {
                                 *potential_key = None; // On return from a nested item, make sure the object key is unset
+                                self.on_event_move_up(None);
                                 self.current_status = Status::Object(StatusObject {
                                     substatus: SubStatusObject::BeforeKV(status_done.comma_matched)
                                 })
                             },
-                            NodeType::Array => {
+                            NodeType::Array(_) => {
+                                self.on_event_move_up(None);
                                 self.current_status = Status::Array(StatusArray {
                                     comma_matched: status_done.comma_matched
                                 });
@@ -246,67 +311,76 @@ impl PartialJsonProtocolMapper {
             },
 
             (
-                // Handling children values of Object & Array for simple types
+                // Handling String values for Object & Array
                 _current_status @ (Status::Object(_) | Status::Array(_)),
                 Some(new_status @ (
+                    Status::String(_) |
                     Status::Null(_) |
                     Status::Bool(_) |
                     Status::Number(_)
                 ))
             ) => {
-                // Going down the tree into a basic type
-                let new_node_idx = self.ref_index_generator.generate();
-                self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Basic));
-                self.current_node_idx = new_node_idx;
-                self.current_status = new_status; // Become the new type
-                return Ok(None);
-            },
-
-            (
-                // Handling String values for Object & Array
-                _current_status @ (Status::Object(_) | Status::Array(_)),
-                Some(new_status @ Status::String(_))
-            ) => {
-                // Going down the tree into String type
+                // Going down the tree into a basic or String type
                 let new_node_idx = self.ref_index_generator.generate();
                 self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Basic));
                 let parent_node_idx = self.current_node_idx;
                 self.current_node_idx = new_node_idx;
                 self.current_status = new_status; // Become the new type
-                let parent_node = self.node_map.get(&parent_node_idx).unwrap();
-                match &parent_node.node_type {
-                    NodeType::Object(potential_key) => { // Only when we are parsing the string that is the value of the object (because key is existing)
+                let parent_node = self.node_map.get_mut(&parent_node_idx).unwrap();
+                match &mut parent_node.node_type {
+                    NodeType::Object(ref potential_key) => { // Only when we are parsing the string that is the value of the object (because key is existing)
                         if let Some(key) = potential_key {
-                            return Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
-                                self.make_row(
-                                    parent_node_idx,
-                                    OPERATOR_APPEND,
-                                    json!({key: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
-                                ),
-                                self.make_row(
-                                    self.current_node_idx,
-                                    OPERATOR_ASSIGN,
-                                    "\"\"",
-                                ),
-                            )));
+                            let key_copy = key.clone(); // To fix borrowing issue
+                            let result = match self.current_status {
+                                // For string, we need to initialize the row, as we will be appending parts
+                                Status::String(_) => {
+                                    Ok(Some(format!("{}{}", // Double initialization : a new index, and a new string at that index
+                                    self.make_row(
+                                        parent_node_idx,
+                                        OPERATOR_APPEND,
+                                        json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
+                                    ),
+                                    self.make_row(
+                                        self.current_node_idx,
+                                        OPERATOR_ASSIGN,
+                                        "\"\"",
+                                    ),
+                                )))
+                                }
+                                Status::Null(_) | Status::Bool(_) | Status::Number(_) => Ok(None),
+                                _ => unreachable!("Status flow is invalid")
+                            };
+                            self.on_event_move_down(&key_copy);
+                            return result;
                         } else {
                             // This String is being used to parse an object's key : do not write now, wait for the value
                             return Ok(None);
                         }
                     }
-                    NodeType::Array => { // Or when its the value of the array
-                        return Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
-                            self.make_row(
-                                parent_node_idx,
-                                OPERATOR_APPEND,
-                                format!("\"{}{}\"", STREAM_VAR_PREFIX, new_node_idx),
-                            ),
-                            self.make_row(
-                                self.current_node_idx,
-                                OPERATOR_ASSIGN,
-                                "\"\"",
-                            ),
-                        )));
+                    NodeType::Array(arr_idx) => { // Or when its the value of the array
+                        let arr_idx_str = arr_idx.to_string(); // Converting the current array index (it has not been used yet)
+                        *arr_idx = *arr_idx + 1;
+                        let result = match self.current_status {
+                            // For string, we need to initialize the row, as we will be appending parts
+                            Status::String(_) => {
+                                Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
+                                    self.make_row(
+                                        parent_node_idx,
+                                        OPERATOR_APPEND,
+                                        format!("\"{}{}\"", STREAM_VAR_PREFIX, new_node_idx),
+                                    ),
+                                    self.make_row(
+                                        self.current_node_idx,
+                                        OPERATOR_ASSIGN,
+                                        "\"\"",
+                                    ),
+                                )))
+                            }
+                            Status::Null(_) | Status::Bool(_) | Status::Number(_) => Ok(None),
+                            _ => unreachable!("Status flow is invalid")
+                        };
+                        self.on_event_move_down(&arr_idx_str);
+                        return result;
                     },
                     _ => unreachable!("Logic error : String cannot be a child of non-object and non-array")
                 }
@@ -323,14 +397,15 @@ impl PartialJsonProtocolMapper {
                 let parent_node_idx = self.current_node_idx;
                 self.current_node_idx = new_node_idx;
                 self.current_status = new_status;
-                let parent_node = self.node_map.get(&parent_node_idx).unwrap();
-                match &parent_node.node_type {
+                let parent_node = self.node_map.get_mut(&parent_node_idx).unwrap();
+                match &mut parent_node.node_type {
                     NodeType::Object(Some(key)) => {
-                        return Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
+                        let key_copy = key.clone(); // To fix borrowing issue
+                        let result = Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
-                                json!({key: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
+                                json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
                             ),
                             self.make_row(
                                 self.current_node_idx,
@@ -338,9 +413,13 @@ impl PartialJsonProtocolMapper {
                                 "{}",
                             ),
                         )));
+                        self.on_event_move_down(&key_copy);
+                        return result;
                     },
-                    NodeType::Array => {
-                        return Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
+                    NodeType::Array(arr_idx) => {
+                        let arr_idx_str = arr_idx.to_string(); // Converting the current array index (it has not been used yet)
+                        *arr_idx = *arr_idx + 1;
+                        let result = Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
@@ -352,6 +431,8 @@ impl PartialJsonProtocolMapper {
                                 "{}",
                             ),
                         )));
+                        self.on_event_move_down(&arr_idx_str);
+                        return result;
                     },
                     _ => unreachable!("Logic error : nesting is being made from an object which doesn't have its key")
                 }
@@ -364,18 +445,19 @@ impl PartialJsonProtocolMapper {
             ) => {
                 // Going down the tree into a new string : generate new index
                 let new_node_idx = self.ref_index_generator.generate();
-                self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Array));
+                self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Array(0)));
                 let parent_node_idx = self.current_node_idx;
                 self.current_node_idx = new_node_idx;
                 self.current_status = new_status;
-                let parent_node = self.node_map.get(&parent_node_idx).unwrap();
-                match &parent_node.node_type {
+                let parent_node = self.node_map.get_mut(&parent_node_idx).unwrap();
+                match &mut parent_node.node_type {
                     NodeType::Object(Some(key)) => {
-                        return Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
+                        let key_copy = key.clone(); // To fix borrowing issue
+                        let result = Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
-                                json!({key: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
+                                json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
                             ),
                             self.make_row(
                                 self.current_node_idx,
@@ -383,9 +465,13 @@ impl PartialJsonProtocolMapper {
                                 "[]",
                             ),
                         )));
+                        self.on_event_move_down(&key_copy);
+                        return result;
                     },
-                    NodeType::Array => {
-                        return Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
+                    NodeType::Array(arr_idx) => {
+                        let arr_idx_str = arr_idx.to_string(); // Converting the current array index (it has not been used yet)
+                        *arr_idx = *arr_idx + 1;
+                        let result = Ok(Some(format!("{}{}", // Double initialization : a new index, and a new object at that index
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
@@ -397,6 +483,8 @@ impl PartialJsonProtocolMapper {
                                 "[]",
                             ),
                         )));
+                        self.on_event_move_down(&arr_idx_str);
+                        return result;
                     },
                     _ => unreachable!("Logic error : nesting is being made from an object which doesn't have its key")
                 }
@@ -413,7 +501,16 @@ impl PartialJsonProtocolMapper {
     #[inline]
     pub fn flush(&mut self) -> Option<String> {
         match self.current_status.flush() {
-            Some(data) => Some(format!("{}{}{}\n", self.current_node_idx, OPERATOR_APPEND, data)),
+            Some(data) => {
+                match &data {
+                    Value::String(str) => {
+                        // Save in buffer
+                        self.string_value_buffer.push_str(str);
+                    },
+                    _ => {}
+                }
+                Some(format!("{}{}{}\n", self.current_node_idx, OPERATOR_APPEND, data.to_string()))
+            }
             None => None,
         }
     }
@@ -445,7 +542,7 @@ impl PartialJsonProtocolMapper {
                                 substatus: SubStatusObject::BeforeKV(false)
                             });
                         },
-                        NodeType::Array => {
+                        NodeType::Array(_1) => {
                             self.current_status = Status::Array(StatusArray { comma_matched: false }); 
                         },
                         NodeType::Basic => unreachable!("Nested data cannot return into non-object or non-array"),
@@ -453,5 +550,21 @@ impl PartialJsonProtocolMapper {
                 }
             }
         }
+        self.on_event_move_up(None);
+    }
+
+    /// Attach a function to be executed when an event occurs at a given element
+    /// Element is a simple string path to a JSON key. Ex: "parent.child.grandchildren[0].name"
+    /// Json key path uses dot notation to separate levels. Array index can be replaced with wildcard (*) to match every element
+    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: fn(Option<&Value>) -> ()) {
+        let list_maps_for_event = self
+            .event_map
+            .entry(event)
+            .or_insert(HashMap::new()
+        );
+        let event_list = list_maps_for_event
+            .entry(element)
+            .or_insert(Vec::new());
+        event_list.push(func);
     }
 }

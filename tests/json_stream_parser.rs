@@ -1,7 +1,7 @@
 use test_log::test;
 use std::{cell::RefCell, rc::Rc};
 
-use stream_protocol_lib::{json_stream_parser::JsonStreamParser, ref_index_generator::RefIndexGenerator};
+use stream_protocol_lib::{json_stream_parser::{JsonStreamParser, ParserEvent}, ref_index_generator::RefIndexGenerator};
 
 #[test]
 fn test_unit() {
@@ -346,14 +346,28 @@ fn test_flush_for_object_keys() {
         r#""}"#,
     ];
 
+    let reg_arr = [
+        "2={}\n",
+        "2+={\"h1\":\"$ke$4\"}\n4=\"\"\n",
+    ];
+    
+    let flu_arr = [
+        "4+=\"da\"\n",
+        "4+=\"ta\"\n",
+    ];
+
+    let mut reg_i = 0;
+    let mut flu_i = 0;
     for input in inputs {
         for byte in input.as_bytes() {
             if let Ok(Some(regular_output)) = json_stream_parser.add_char(&byte) {
-                println!(" >> REG: {}", regular_output);
+                assert_eq!(regular_output.as_str(), reg_arr[reg_i]);
+                reg_i += 1;
             }
         }
         if let Some(flushed_output) = json_stream_parser.flush() {
-            println!(" >> FLU: {}", flushed_output);
+            assert_eq!(flushed_output.as_str(), flu_arr[flu_i]);
+            flu_i += 1;
         }
     }
 }
@@ -364,8 +378,30 @@ fn test_gpt() {
 
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
-    
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt)
+        // Testing events
+        .with_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), |value| {
+            assert!(value.is_some());
+            let value = value.unwrap(); 
+            assert!(value.is_string());
+            let value = value.as_str().unwrap();
+            assert_eq!("source_1", value);
+        })
+        .with_event_handler(ParserEvent::OnElementEnd, "references.*".to_string(), |value| {
+            assert!(value.is_some());
+            let value = value.unwrap(); 
+            assert!(value.is_string());
+            let value = value.as_str().unwrap();
+            assert!(value == "source_1" || value == "source_2"); // Any of the array due to the wildcard
+        })
+        .with_event_handler(ParserEvent::OnElementEnd, "test_escape".to_string(), |value| {
+            assert!(value.is_some());
+            let value = value.unwrap(); 
+            assert!(value.is_string());
+            let value = value.as_str().unwrap();
+            assert_eq!(value, "line\ntab\tend");
+        });
     let inputs = [
         r#"{"#,
         r#""references"#,

@@ -1,6 +1,7 @@
 use derivative::Derivative;
 use error::ParseError;
 use partial_json_protocol_mapper::PartialJsonProtocolMapper;
+use serde_json::Value;
 use status::{Status, StatusTrait};
 
 use crate::{byte_to_char, ref_index_generator::RefIndexGenerator};
@@ -31,6 +32,11 @@ pub struct JsonStreamParser {
     mapper: PartialJsonProtocolMapper,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum ParserEvent {
+    OnElementBegin,
+    OnElementEnd
+}
 
 #[cfg( not(feature = "async") )]
 impl JsonStreamParser {
@@ -60,6 +66,21 @@ impl JsonStreamParser {
     #[inline]
     pub fn flush(&mut self) -> Option<String> {
         self.mapper.flush()
+    }
+
+    /// Attach a function to be executed when an event occurs at a given element
+    /// Element is a simple string path to a JSON key. Ex: "parent.child.grandchildren[0].name"
+    /// Json key path uses dot notation to separate levels. Array index can be replaced with wildcard (*) to match every element
+    /// The parameter to the event function is set to the value of the element when the event is OnElementEnd,
+    /// but only when the element is not an Array or an Object - for performance reasons (set to None in all other cases)
+    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: fn(Option<&Value>) -> ()) {
+        self.mapper.add_event_handler(event, element, func);
+    }
+
+    /// Builder style version of add_event_handler method 
+    pub fn with_event_handler(mut self, event: ParserEvent, element: String, func: fn(Option<&Value>) -> ()) -> Self {
+        self.mapper.add_event_handler(event, element, func);
+        self
     }
 }
 

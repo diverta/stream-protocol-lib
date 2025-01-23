@@ -4,7 +4,7 @@ use crate::json_stream_parser::error::ParseError;
 
 use super::{Status, StatusArray, StatusBool, StatusNull, StatusNumber, StatusObject, StatusString, StatusTrait};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct StatusNone {
     
 }
@@ -48,7 +48,7 @@ impl StatusTrait for StatusNone {
         }
     }
     
-    fn flush(&mut self) -> Option<String> {
+    fn flush(&mut self) -> Option<Value> {
         None
     }
     

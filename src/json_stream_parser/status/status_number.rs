@@ -4,7 +4,7 @@ use crate::json_stream_parser::error::ParseError;
 
 use super::{Status, StatusTrait};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct StatusNumber {
     dot_matched: bool,
     match_so_far: Vec<u8> // Contains incomplete sequence
@@ -73,7 +73,7 @@ impl StatusTrait for StatusNumber {
         }
     }
 
-    fn flush(&mut self) -> Option<String> {
+    fn flush(&mut self) -> Option<Value> {
         None
     }
     

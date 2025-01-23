@@ -4,14 +4,14 @@ use crate::json_stream_parser::error::ParseError;
 
 use super::{Status, StatusTrait};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct StatusString {
     string_in_progress: Vec<u8>,
     escape: EscapeState,
     is_object_key: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum EscapeState {
     None, // Not escaping
     Began, // After \ is detected
@@ -124,7 +124,7 @@ impl StatusTrait for StatusString {
         }
     }
 
-    fn flush(&mut self) -> Option<String> {
+    fn flush(&mut self) -> Option<Value> {
         if !self.is_object_key && self.string_in_progress.len() > 0 {
             let output: String = match std::str::from_utf8(&mut self.string_in_progress) {
                 Ok(data) => {
@@ -140,7 +140,7 @@ impl StatusTrait for StatusString {
                 }
             };
             if output.len() > 0 {
-                Some(Value::String(output).to_string()) // Converting into JSON String
+                Some(Value::String(output)) // Converting into JSON String
             } else {
                 None
             }

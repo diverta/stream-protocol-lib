@@ -19,7 +19,7 @@ pub(crate) mod status_object;
 pub(crate) mod status_string;
 pub(crate) mod status_done;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum Status {
     None(StatusNone), // Typically at the very first iteration, when the root object is still undefined
     Null(StatusNull),
@@ -36,7 +36,7 @@ pub(crate) trait StatusTrait {
     // Returns the potential data for this status. Only returns if a full row is ready, in which case the current item must be considered completed
     fn add_char(&mut self, c: &u8) -> Result<Option<(Option<Value>, Option<Status>)>, ParseError>;
     // Return the current buffer on demand. Each status must handle its inner buffer accordingly
-    fn flush(&mut self) -> Option<String>; // Returns partial buffer of this status. Might return empty string. Valid string is guaranteed (partial bytes are kept)
+    fn flush(&mut self) -> Option<Value>; // Returns partial buffer of this status as JsonValue. If string, it will be valid (partial bytes are kept)
     // Helper for initialization with character
     fn with_char(self, c: &u8) -> Self;
 }
@@ -60,7 +60,7 @@ impl StatusTrait for Status {
         }
     }
     
-    fn flush(&mut self) -> Option<String> {
+    fn flush(&mut self) -> Option<Value> {
         match self {
             Status::None(s) => s.flush(),
             Status::Null(s) => s.flush(),
