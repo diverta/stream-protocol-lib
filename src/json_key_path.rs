@@ -7,7 +7,7 @@
 /// parent.1 # Root is an object having key "parent" which is an array or an object
 /// parent.*  # Wildcard for any key of 'parent' which is object or array
 /// *         # Wildcard for any key of root which is an object or array
-/// *.*      # WILL NOT WORK ! Multiple wildcards are not supported
+/// *.*      # Wildcard for any second level base type (non object or array) within nested object/array
 pub struct JsonKeyPath {
     current_key: String
 }
@@ -60,7 +60,6 @@ impl JsonKeyPath {
         // Two cursors that increase at the same time
         let mut expr_idx = 0_usize; 
         let mut current_idx = 0_usize;
-        let mut wildcard_found = false; // Ensure we only have a single wildcard
         let expr_bytes = expr.as_bytes();
         let expr_bytes_len = expr_bytes.len();
         let current_bytes = self.current_key.as_bytes();
@@ -71,12 +70,6 @@ impl JsonKeyPath {
                 return expr_bytes_len == expr_idx && current_bytes_len == current_idx;
             }
             if expr_bytes[expr_idx] == b'*' {
-                // Handle wildcard
-                if wildcard_found {
-                    // Aleady found : this is a second one
-                    return false;
-                }
-                wildcard_found = true;
                 loop {
                     // Forward current_idx to match the state
                     current_idx += 1;

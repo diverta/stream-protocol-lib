@@ -1,3 +1,4 @@
+use serde_json::Value;
 use test_log::test;
 use std::{cell::RefCell, rc::Rc};
 
@@ -381,27 +382,27 @@ fn test_gpt() {
 
     let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt)
         // Testing events
-        .with_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), |value| {
+        .with_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), Box::new(|value: Option<&Value>| {
             assert!(value.is_some());
             let value = value.unwrap(); 
             assert!(value.is_string());
             let value = value.as_str().unwrap();
             assert_eq!("source_1", value);
-        })
-        .with_event_handler(ParserEvent::OnElementEnd, "references.*".to_string(), |value| {
+        }))
+        .with_event_handler(ParserEvent::OnElementEnd, "references.*".to_string(), Box::new(|value: Option<&Value>| {
             assert!(value.is_some());
             let value = value.unwrap(); 
             assert!(value.is_string());
             let value = value.as_str().unwrap();
             assert!(value == "source_1" || value == "source_2"); // Any of the array due to the wildcard
-        })
-        .with_event_handler(ParserEvent::OnElementEnd, "test_escape".to_string(), |value| {
+        }))
+        .with_event_handler(ParserEvent::OnElementEnd, "test_escape".to_string(), Box::new(|value: Option<&Value>| {
             assert!(value.is_some());
             let value = value.unwrap(); 
             assert!(value.is_string());
             let value = value.as_str().unwrap();
             assert_eq!(value, "line\ntab\tend");
-        });
+        }));
     let inputs = [
         r#"{"#,
         r#""references"#,
@@ -453,5 +454,91 @@ fn test_gpt() {
             assert_eq!(flushed_output, expected[i]);
             i += 1;
         }
+    }
+}
+
+#[test]
+fn test_gemini() {
+    let input = r#"[{
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "a"
+                },
+                {
+                  "text": "b"
+                }
+              ],
+              "role": "model"
+            }
+          },
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "c"
+                },
+                {
+                  "text": "d"
+                }
+              ],
+              "role": "model"
+            }
+          }
+        ],
+        "modelVersion": "gemini-2.0-flash-exp"
+      },{
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "e"
+                },
+                {
+                  "text": "f"
+                }
+              ],
+              "role": "model"
+            }
+          },
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "g"
+                },
+                {
+                  "text": "h"
+                }
+              ],
+              "role": "model"
+            }
+          }
+        ],
+        "modelVersion": "gemini-2.0-flash-exp"
+      }
+    ]"#;
+    let ref_index_generator = RefIndexGenerator::new();
+
+    // Expected items in reverse order
+    let expected = RefCell::new(["h", "g", "f", "e", "d", "c", "b", "a"].to_vec());
+
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, 0)
+        .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<&Value>| {
+            assert!(value.is_some());
+            let value = value.unwrap(); 
+            assert!(value.is_string());
+            let value = value.as_str().unwrap();
+            let results = &expected;
+            let mut expected_b = results.borrow_mut();
+            assert!(expected_b.len() > 0);
+            let expected_item = expected_b.pop().unwrap();
+            assert_eq!(value, expected_item);
+        }));
+    for byte in input.as_bytes() {
+        assert!(json_stream_parser.add_char(&byte).is_ok());
     }
 }

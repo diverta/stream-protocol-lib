@@ -1,6 +1,5 @@
 use stream_protocol_lib::json_key_path::JsonKeyPath;
 
-
 #[test]
 fn test_json_key_path() {
     let mut json_key_path = JsonKeyPath::new();
@@ -53,4 +52,20 @@ fn test_json_key_path() {
     assert!(!json_key_path.match_expr("parent.0"));
     assert!(!json_key_path.match_expr("parent"));
 
+}
+
+#[test]
+fn test_json_key_path_gemini() {
+    let mut json_key_path = JsonKeyPath::new();
+
+    // Make path similar to Gemini stream
+    assert!(json_key_path.move_down_object_or_array("0"));
+    assert!(json_key_path.move_down_object_or_array("candidates"));
+    assert!(json_key_path.move_down_object_or_array("0"));
+    assert!(json_key_path.move_down_object_or_array("content"));
+    assert!(json_key_path.move_down_object_or_array("parts"));
+    assert!(json_key_path.move_down_object_or_array("0"));
+    assert!(json_key_path.move_down_object_or_array("text"));
+
+    assert!(json_key_path.match_expr("*.candidates.*.content.parts.*.text"));
 }

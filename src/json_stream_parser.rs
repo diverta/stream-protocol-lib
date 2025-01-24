@@ -73,12 +73,12 @@ impl JsonStreamParser {
     /// Json key path uses dot notation to separate levels. Array index can be replaced with wildcard (*) to match every element
     /// The parameter to the event function is set to the value of the element when the event is OnElementEnd,
     /// but only when the element is not an Array or an Object - for performance reasons (set to None in all other cases)
-    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: fn(Option<&Value>) -> ()) {
+    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: Box<dyn Fn(Option<&Value>) -> ()>) {
         self.mapper.add_event_handler(event, element, func);
     }
 
     /// Builder style version of add_event_handler method 
-    pub fn with_event_handler(mut self, event: ParserEvent, element: String, func: fn(Option<&Value>) -> ()) -> Self {
+    pub fn with_event_handler(mut self, event: ParserEvent, element: String, func: Box<dyn Fn(Option<&Value>) -> ()>) -> Self {
         self.mapper.add_event_handler(event, element, func);
         self
     }

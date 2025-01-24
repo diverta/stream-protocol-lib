@@ -19,7 +19,7 @@ pub(crate) struct PartialJsonProtocolMapper {
     node_map: HashMap<usize, Node>,
     current_node_idx: usize,
     current_status: Status,
-    event_map: HashMap<ParserEvent, HashMap<String,Vec<fn(Option<&Value>) -> ()>>>,
+    event_map: HashMap<ParserEvent, HashMap<String,Vec<Box<dyn Fn(Option<&Value>) -> ()>>>>,
     is_done: bool,
     string_value_buffer: String, // Storing the string buffer that persists across flushes. Used by events
 }
@@ -556,7 +556,7 @@ impl PartialJsonProtocolMapper {
     /// Attach a function to be executed when an event occurs at a given element
     /// Element is a simple string path to a JSON key. Ex: "parent.child.grandchildren[0].name"
     /// Json key path uses dot notation to separate levels. Array index can be replaced with wildcard (*) to match every element
-    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: fn(Option<&Value>) -> ()) {
+    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: Box<dyn Fn(Option<&Value>) -> ()>) {
         let list_maps_for_event = self
             .event_map
             .entry(event)
