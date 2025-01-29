@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 use crate::{json_key_path::JsonKeyPath, json_stream_parser::status::status_array::StatusArray, ref_index_generator::RefIndexGenerator, OPERATOR_APPEND, OPERATOR_ASSIGN, STREAM_VAR_PREFIX};
 
 use node::{Node, NodeType};
@@ -13,18 +13,20 @@ mod node;
 /// Flush feature may be used to write the row in progress - otherwise a string writes only when it is completed
 /// 
 /// Note: this makes most straighforward use of the protocol
-pub(crate) struct PartialJsonProtocolMapper {
+pub(crate) struct PartialJsonProtocolMapper<F> {
     key_path: JsonKeyPath,
     ref_index_generator: RefIndexGenerator,
     node_map: HashMap<usize, Node>,
     current_node_idx: usize,
     current_status: Status,
-    event_map: HashMap<ParserEvent, HashMap<String,Vec<Box<dyn Fn(Option<&Value>) -> ()>>>>,
+    event_map: HashMap<ParserEvent, HashMap<String,Vec<F>>>,
     is_done: bool,
     string_value_buffer: String, // Storing the string buffer that persists across flushes. Used by events
 }
 
-impl PartialJsonProtocolMapper {
+impl<F> PartialJsonProtocolMapper<F>
+where F: Fn(Option<Rc<Value>>) -> ()
+{
     pub(crate) fn new(ref_index_generator: RefIndexGenerator, current_node_idx: usize) -> Self {
         Self {
             key_path: JsonKeyPath::new(),
@@ -62,7 +64,7 @@ impl PartialJsonProtocolMapper {
         }
     }
 
-    fn on_event_move_up(&mut self, value: Option<&Value>) {
+    fn on_event_move_up(&mut self, value: Option<Rc<Value>>) {
         if let Some(list_maps_for_event) = self.event_map.get(&ParserEvent::OnElementEnd) {
             for event_key in list_maps_for_event.keys() {
                 if self.key_path.match_expr(event_key) {
@@ -73,9 +75,9 @@ impl PartialJsonProtocolMapper {
                         if self.string_value_buffer.len() > 0 {
                             // No choice but to clone the buffer if we want to support having several references to the same element
                             let string_value = self.string_value_buffer.clone();
-                            event_fn(Some(&Value::String(string_value)));
+                            event_fn(Some(Rc::new(Value::String(string_value))));
                         } else {
-                            event_fn(value);
+                            event_fn(value.as_ref().map(|v| Rc::clone(&v)));
                         }
                     }
                 }
@@ -101,6 +103,7 @@ impl PartialJsonProtocolMapper {
             return Ok(None);
         }
         let (output_value, next_status) = add_char_to_status_result.unwrap();
+        let output_value = output_value.map(|v| Rc::new(v));
 
         // Processing the result of the add_char based on the current status
         match (&mut self.current_status, next_status) {
@@ -128,8 +131,7 @@ impl PartialJsonProtocolMapper {
             // A status has been completed
             (current_status, Some(Status::Done(status_done))) => {
                 let current_node = self.node_map.get(&self.current_node_idx);
-
-                if let Some(Value::String(val)) = output_value.as_ref() {
+                if let Some(Value::String(val)) = output_value.as_deref() {
                     // Push output string into buffer before any potential self.on_event_move_up
                     self.string_value_buffer.push_str(val);
                 }
@@ -164,7 +166,7 @@ impl PartialJsonProtocolMapper {
                 if parent_node.is_none() {
                     // The parent node (which is now current) doesn't exist : we are done
                     // This should only happen for a top level basic json type (string, number, null, bool)
-                    self.on_event_move_up(output_value.as_ref());
+                    self.on_event_move_up(output_value.as_ref().map(|v| Rc::clone(&v)));
                     return Ok(
                         output_value.map(|output|
                             self.make_row(
@@ -222,7 +224,7 @@ impl PartialJsonProtocolMapper {
                                     self.current_status = Status::Object(StatusObject {
                                         substatus: SubStatusObject::BeforeKV(false)
                                     });
-                                    self.on_event_move_up(output_value.as_ref());
+                                    self.on_event_move_up(output_value);
                                     if status_done.done_object {
                                         // Not only the value is completed, but the current object must be too : go back up once again
                                         self.move_up();
@@ -271,7 +273,7 @@ impl PartialJsonProtocolMapper {
                                     _ => unreachable!("All base types are covered, aren't they?")
                                 };
                                 self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
-                                self.on_event_move_up(output_value.as_ref());
+                                self.on_event_move_up(output_value);
                                 if status_done.done_array {
                                     // Not only the value is completed, but the current array must be too
                                     // => go back up once again
@@ -556,7 +558,7 @@ impl PartialJsonProtocolMapper {
     /// Attach a function to be executed when an event occurs at a given element
     /// Element is a simple string path to a JSON key. Ex: "parent.child.grandchildren[0].name"
     /// Json key path uses dot notation to separate levels. Array index can be replaced with wildcard (*) to match every element
-    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: Box<dyn Fn(Option<&Value>) -> ()>) {
+    pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: F) {
         let list_maps_for_event = self
             .event_map
             .entry(event)

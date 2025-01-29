@@ -1,13 +1,13 @@
 /// String representation of a path to a JSON key, allowing navigation
 /// Examples :
-/// parent    # Root is an object with a key
-/// parent.child.name
-/// parent.children.1.name
-/// 1       # Root being an array, access its second element
-/// parent.1 # Root is an object having key "parent" which is an array or an object
-/// parent.*  # Wildcard for any key of 'parent' which is object or array
-/// *         # Wildcard for any key of root which is an object or array
-/// *.*      # Wildcard for any second level base type (non object or array) within nested object/array
+/// "parent"    # Root is an object with a key
+/// "parent.child.name"
+/// "parent.children.1.name"
+/// "1"         # Root being an array, access its second element
+/// "parent.1"  # Root is an object having key "parent" which is an array or an object
+/// "parent.*"  # Wildcard for any key of 'parent' which is object or array
+/// "*"         # Wildcard for any key of root which is an object or array
+/// "*.*"       # Wildcard for any second level base type (non object or array) within nested object/array
 pub struct JsonKeyPath {
     current_key: String
 }

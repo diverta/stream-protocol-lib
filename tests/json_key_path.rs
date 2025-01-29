@@ -36,9 +36,9 @@ fn test_json_key_path() {
     assert!(json_key_path.match_expr("parent.0"));
     assert!(json_key_path.match_expr("parent.*"));
     assert!(json_key_path.match_expr("*.0"));
+    assert!(json_key_path.match_expr("*.*"));
     assert!(!json_key_path.match_expr("parent.1"));
     assert!(!json_key_path.match_expr("parent"));
-    assert!(!json_key_path.match_expr("*.*")); // Double wildcard is NG
 
     assert!(json_key_path.move_up());
     assert!(json_key_path.match_expr("parent"));

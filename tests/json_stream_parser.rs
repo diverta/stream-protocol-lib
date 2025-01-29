@@ -217,7 +217,7 @@ fn test_unit() {
         ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
         let cnt = ref_index_generator.generate(); // 2
         
-        let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
 
         let expected_line_arr: Vec<&str> = expected_lines.split('\n').collect();
         
@@ -249,7 +249,7 @@ fn test_flush_regular() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
     
     let input = r#"{"key":"Some longer sentence"}"#;
     let expected_line_arr = [
@@ -291,7 +291,7 @@ fn test_flush_inbetween_utf8_boundaries() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
     
     let input = r#""東京都飯田橋""#;
     let expected_line_arr = [
@@ -336,9 +336,8 @@ fn test_flush_for_object_keys() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
     let inputs = [
-        r#"{""#,
         r#"h"#,
         r#"1"#,
         r#"":""#,
@@ -380,29 +379,30 @@ fn test_gpt() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
 
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, cnt)
-        // Testing events
-        .with_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), Box::new(|value: Option<&Value>| {
-            assert!(value.is_some());
-            let value = value.unwrap(); 
-            assert!(value.is_string());
-            let value = value.as_str().unwrap();
-            assert_eq!("source_1", value);
-        }))
-        .with_event_handler(ParserEvent::OnElementEnd, "references.*".to_string(), Box::new(|value: Option<&Value>| {
-            assert!(value.is_some());
-            let value = value.unwrap(); 
-            assert!(value.is_string());
-            let value = value.as_str().unwrap();
-            assert!(value == "source_1" || value == "source_2"); // Any of the array due to the wildcard
-        }))
-        .with_event_handler(ParserEvent::OnElementEnd, "test_escape".to_string(), Box::new(|value: Option<&Value>| {
-            assert!(value.is_some());
-            let value = value.unwrap(); 
-            assert!(value.is_string());
-            let value = value.as_str().unwrap();
-            assert_eq!(value, "line\ntab\tend");
-        }));
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
+
+    // Testing events
+    json_stream_parser.add_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), Box::new(|value: Option<Rc<Value>>| {
+        assert!(value.is_some());
+        let value = value.unwrap(); 
+        assert!(value.is_string());
+        let value = value.as_str().unwrap();
+        assert_eq!("source_1", value);
+    }));
+    json_stream_parser.add_event_handler(ParserEvent::OnElementEnd, "references.*".to_string(), Box::new(|value: Option<Rc<Value>>| {
+        assert!(value.is_some());
+        let value = value.unwrap(); 
+        assert!(value.is_string());
+        let value = value.as_str().unwrap();
+        assert!(value == "source_1" || value == "source_2"); // Any of the array due to the wildcard
+    }));
+    json_stream_parser.add_event_handler(ParserEvent::OnElementEnd, "test_escape".to_string(), Box::new(|value: Option<Rc<Value>>| {
+        assert!(value.is_some());
+        let value = value.unwrap(); 
+        assert!(value.is_string());
+        let value = value.as_str().unwrap();
+        assert_eq!(value, "line\ntab\tend");
+    }));
     let inputs = [
         r#"{"#,
         r#""references"#,
@@ -527,7 +527,7 @@ fn test_gemini() {
     let expected = RefCell::new(["h", "g", "f", "e", "d", "c", "b", "a"].to_vec());
 
     let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, 0)
-        .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<&Value>| {
+        .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<Rc<Value>>| {
             assert!(value.is_some());
             let value = value.unwrap(); 
             assert!(value.is_string());
