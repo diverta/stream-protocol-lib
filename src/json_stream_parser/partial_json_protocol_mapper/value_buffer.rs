@@ -12,8 +12,20 @@ impl ValueBuffer {
     pub fn new(root: Value) -> Self {
         Self {
             root,
-            pointer: String::new(),
+            pointer: Self::pointer_init(),
         }
+    }
+
+    pub fn pointer_init() -> String {
+        String::new() // Uniformize in case adjustments are needed
+    }
+
+    /// Moves out data, and resetting the ValueBuffer
+    pub fn take_buffered_data(&mut self) -> Value {
+        let mut root_value = Value::Null;
+        std::mem::swap(&mut root_value, &mut self.root);
+        self.pointer = Self::pointer_init();
+        return root_value;
     }
 
     pub fn pointer_up(&mut self) {

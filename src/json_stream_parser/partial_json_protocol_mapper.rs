@@ -132,6 +132,10 @@ where F: Fn(Option<Rc<Value>>) -> ()
     pub fn get_buffered_data(&self) -> Option<&Value> {
         self.value_buffer.as_ref().map(|value_buffer| &value_buffer.root)
     }
+    
+    pub fn take_buffered_data(&mut self) -> Option<Value> {
+        self.value_buffer.as_mut().map(|value_buffer| value_buffer.take_buffered_data())
+    }
 
     #[inline]
     fn make_row(&mut self, idx: usize, operator: &'static str, data: impl Into<String>) -> String {
