@@ -2,11 +2,13 @@ use std::{collections::HashMap, rc::Rc};
 use crate::{json_key_path::JsonKeyPath, json_stream_parser::status::status_array::StatusArray, ref_index_generator::RefIndexGenerator, OPERATOR_APPEND, OPERATOR_ASSIGN, STREAM_VAR_PREFIX};
 
 use node::{Node, NodeType};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use value_buffer::ValueBuffer;
 
 use super::{error::ParseError, status::{status_none::StatusNone, status_object::{StatusObject, SubStatusObject}}, ParserEvent, Status, StatusTrait};
 
 mod node;
+mod value_buffer;
 
 /// This mapper attempts to parse a byte stream as a JSON object
 /// At the same time, it writes back using the KurocoEdge streaming protocol of partial JSON at appropriate times
@@ -22,12 +24,22 @@ pub(crate) struct PartialJsonProtocolMapper<F> {
     event_map: HashMap<ParserEvent, HashMap<String,Vec<F>>>,
     is_done: bool,
     string_value_buffer: String, // Storing the string buffer that persists across flushes. Used by events
+    value_buffer: Option<ValueBuffer>,
 }
 
 impl<F> PartialJsonProtocolMapper<F>
 where F: Fn(Option<Rc<Value>>) -> ()
 {
-    pub(crate) fn new(ref_index_generator: RefIndexGenerator, current_node_idx: usize) -> Self {
+    pub(crate) fn new(
+        ref_index_generator: RefIndexGenerator,
+        current_node_idx: usize,
+        enable_buffering: bool
+    ) -> Self {
+        let value_buffer = if enable_buffering {
+            Some(ValueBuffer::new(json!({})))
+        } else {
+            None
+        };
         Self {
             key_path: JsonKeyPath::new(),
             ref_index_generator,
@@ -36,7 +48,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
             current_node_idx,
             event_map: HashMap::new(),
             is_done: false,
-            string_value_buffer: String::new()
+            string_value_buffer: String::new(),
+            value_buffer
         }
     }
 
@@ -62,6 +75,23 @@ where F: Fn(Option<Rc<Value>>) -> ()
             }
             _ => {}
         }
+        if let Some(value_buffer) = self.value_buffer.as_mut() {
+            value_buffer.pointer_down(key).unwrap(); // Panic here represents a logical error : if identified, to be fixed
+            match &self.current_status {
+                // We should also init object/array in case of nesting
+                Status::Array(_) => {
+                    if let Some(value_buffer) = self.value_buffer.as_mut() {
+                        (*value_buffer).insert_at_pointer(Value::Array(Vec::new())).unwrap(); // If this panics then it is a logic error
+                    }
+                },
+                Status::Object(_) => {
+                    if let Some(value_buffer) = self.value_buffer.as_mut() {
+                        (*value_buffer).insert_at_pointer(Value::Object(Map::new())).unwrap(); // If this panics then it is a logic error
+                    }
+                },
+                _ => {}
+            }
+        }
     }
 
     fn on_event_move_up(&mut self, value: Option<Rc<Value>>) {
@@ -85,6 +115,22 @@ where F: Fn(Option<Rc<Value>>) -> ()
         }
         self.string_value_buffer.clear();
         self.key_path.move_up();
+        if let Some(value_buffer) = self.value_buffer.as_mut() {
+            value_buffer.pointer_up();
+        }
+    }
+
+    fn on_event_value_completed(&mut self, output_value: Option<Rc<Value>>) {
+        if let Some(value_buffer) = self.value_buffer.as_mut() {
+            if let Some(output_value) = output_value {
+                let output_value_copy = output_value.as_ref().clone();
+                (*value_buffer).insert_at_pointer(output_value_copy).unwrap(); // If this panics then it is a logic error
+            }
+        }
+    }
+    
+    pub fn get_buffered_data(&self) -> Option<&Value> {
+        self.value_buffer.as_ref().map(|value_buffer| &value_buffer.root)
     }
 
     #[inline]
@@ -121,10 +167,17 @@ where F: Fn(Option<Rc<Value>>) -> ()
                 };
                 self.node_map.insert(self.current_node_idx, Node::new(None, new_node_type));
                 let row: Option<String> = output_value
+                    .as_ref()
                     .map(|output|
                         self.make_row(self.current_node_idx, OPERATOR_ASSIGN, output.to_string())
                     );
                 self.current_status = next_status.unwrap(); // StatusNone always returns next status, switch to it whatever it is
+                if let Some(value_buffer) = self.value_buffer.as_mut() {
+                    if let Some(output_value_ref) = output_value.as_ref() {
+                        let output_value_copy = output_value_ref.as_ref().clone();
+                        (*value_buffer).insert_at_pointer(output_value_copy).unwrap(); // Update root, as pointer should have not been moved yet
+                    }
+                }
                 return Ok(row);
             },
 
@@ -151,7 +204,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         Status::Null(_) | Status::Bool(_) | Status::Number(_) => OPERATOR_ASSIGN,
                         _ => OPERATOR_APPEND
                     };
-                    // self.on_event_move_up(output_value.as_ref()); Needed ?
+                    self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
+                    self.on_event_move_up(output_value.as_ref().map(|v| Rc::clone(&v)));
                     return Ok(output_value.map(|output| {
                         self.make_row(self.current_node_idx, operator, output.to_string())
                     }));
@@ -166,6 +220,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                 if parent_node.is_none() {
                     // The parent node (which is now current) doesn't exist : we are done
                     // This should only happen for a top level basic json type (string, number, null, bool)
+                    self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                     self.on_event_move_up(output_value.as_ref().map(|v| Rc::clone(&v)));
                     return Ok(
                         output_value.map(|output|
@@ -177,6 +232,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         )
                     )
                 }
+                
                 let parent_node = parent_node.unwrap();
                 match current_status {
                     Status::Null(_)|
@@ -224,6 +280,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     self.current_status = Status::Object(StatusObject {
                                         substatus: SubStatusObject::BeforeKV(false)
                                     });
+                                    self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                     self.on_event_move_up(output_value);
                                     if status_done.done_object {
                                         // Not only the value is completed, but the current object must be too : go back up once again
@@ -273,6 +330,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     _ => unreachable!("All base types are covered, aren't they?")
                                 };
                                 self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
+                                self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                 self.on_event_move_up(output_value);
                                 if status_done.done_array {
                                     // Not only the value is completed, but the current array must be too
@@ -291,12 +349,14 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         match &mut parent_node.node_type {
                             NodeType::Object(ref mut potential_key) => {
                                 *potential_key = None; // On return from a nested item, make sure the object key is unset
+                                self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                 self.on_event_move_up(None);
                                 self.current_status = Status::Object(StatusObject {
                                     substatus: SubStatusObject::BeforeKV(status_done.comma_matched)
                                 })
                             },
                             NodeType::Array(_) => {
+                                self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                 self.on_event_move_up(None);
                                 self.current_status = Status::Array(StatusArray {
                                     comma_matched: status_done.comma_matched

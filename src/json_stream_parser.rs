@@ -43,9 +43,9 @@ pub enum ParserEvent {
 impl<F> JsonStreamParser<F>
 where F: Fn(Option<Rc<Value>>) -> ()
 {
-    pub fn new(ref_index_generator: RefIndexGenerator, current_node_index: usize) -> JsonStreamParser<F> {
+    pub fn new(ref_index_generator: RefIndexGenerator, current_node_index: usize, enable_buffering: bool) -> JsonStreamParser<F> {
         JsonStreamParser {
-            mapper: PartialJsonProtocolMapper::new(ref_index_generator, current_node_index)
+            mapper: PartialJsonProtocolMapper::new(ref_index_generator, current_node_index, enable_buffering)
         }
     }
 
@@ -84,6 +84,10 @@ where F: Fn(Option<Rc<Value>>) -> ()
     pub fn with_event_handler(mut self, event: ParserEvent, element: String, func: F) -> Self {
         self.mapper.add_event_handler(event, element, func);
         self
+    }
+    
+    pub fn get_buffered_data(&self) -> Option<&Value> {
+        self.mapper.get_buffered_data()
     }
 }
 

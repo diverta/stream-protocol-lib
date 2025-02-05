@@ -217,7 +217,7 @@ fn test_unit() {
         ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
         let cnt = ref_index_generator.generate(); // 2
         
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, true);
 
         let expected_line_arr: Vec<&str> = expected_lines.split('\n').collect();
         
@@ -240,6 +240,13 @@ fn test_unit() {
             }
             //println!("{} ==> {}", std::ascii::escape_default(*byte), String::from_utf8(buffer_b.to_vec()).unwrap());
         }
+        
+        // Testing buffered data
+        let buffered_data = json_stream_parser.get_buffered_data();
+        assert!(buffered_data.is_some());
+        let buffered_data = buffered_data.unwrap();
+        let input_value: Value = serde_json::from_str(input).unwrap();
+        assert_eq!(&input_value, buffered_data);
     }
 }
 
@@ -249,7 +256,7 @@ fn test_flush_regular() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
     
     let input = r#"{"key":"Some longer sentence"}"#;
     let expected_line_arr = [
@@ -291,7 +298,7 @@ fn test_flush_inbetween_utf8_boundaries() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
     
     let input = r#""東京都飯田橋""#;
     let expected_line_arr = [
@@ -336,7 +343,7 @@ fn test_flush_for_object_keys() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
     let inputs = [
         r#"h"#,
         r#"1"#,
@@ -379,7 +386,7 @@ fn test_gpt() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
 
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
 
     // Testing events
     json_stream_parser.add_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), Box::new(|value: Option<Rc<Value>>| {
@@ -526,7 +533,7 @@ fn test_gemini() {
     // Expected items in reverse order
     let expected = RefCell::new(["h", "g", "f", "e", "d", "c", "b", "a"].to_vec());
 
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, 0)
+    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, 0, true)
         .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<Rc<Value>>| {
             assert!(value.is_some());
             let value = value.unwrap(); 
@@ -541,4 +548,11 @@ fn test_gemini() {
     for byte in input.as_bytes() {
         assert!(json_stream_parser.add_char(&byte).is_ok());
     }
+
+    // Testing buffered data
+    let buffered_data = json_stream_parser.get_buffered_data();
+    assert!(buffered_data.is_some());
+    let buffered_data = buffered_data.unwrap();
+    let input_value: Value = serde_json::from_str(input).unwrap();
+    assert_eq!(&input_value, buffered_data);
 }
