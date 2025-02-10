@@ -89,6 +89,10 @@ where F: Fn(Option<Rc<Value>>) -> ()
     pub fn get_buffered_data(&self) -> Option<&Value> {
         self.mapper.get_buffered_data()
     }
+    
+    pub fn take_buffered_data(&mut self) -> Option<Value> {
+        self.mapper.take_buffered_data()
+    }
 }
 
 #[cfg(feature = "async")]
