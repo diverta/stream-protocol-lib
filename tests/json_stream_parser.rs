@@ -556,3 +556,43 @@ fn test_gemini() {
     let input_value: Value = serde_json::from_str(input).unwrap();
     assert_eq!(&input_value, buffered_data);
 }
+
+#[test]
+fn test_flush_buffer() {
+    let input = r###"
+{
+  "answer": {
+    "article": "## RAG（検索拡張生成）とは？その機能と活用\n\n**はじめに**\nRAG（Retrieval-Augmented Generation、検索拡張生成）は、大規模言語モデル（LLM）の能力を拡張する手法です。LLM>は膨大な知識を持っていますが、最新情報や特定のドメインに関する知識が不足している場合があります。RAGは、外部の知識ソースから関連情報を検索し、LLMに提供することで、より正確で最新の情報に
+基づいた回答を生成できるようにします。\n\n## RAGの基本的な仕組み\nRAGは、大きく分けて「検索」と「生成」の2つのステップで構成されます。まず、ユーザーの質問やクエリに基づいて、関連する情
+報を外部の知識ソースから検索します。次に、検索された情報と元の質問を組み合わせて、LLMが回答を生成します。これにより、LLMは自身の知識だけでなく、外部の情報も活用して、より質の高い回答を
+提供できます。\n\n## RAGの主なメリット\nRAGの主なメリットは、LLMの知識を最新の状態に保ち、特定のドメインに関する知識を強化できることです。また、RAGは、LLMが回答の根拠となる情報を明示的
+に示すことができるため、回答の信頼性を高めることができます。さらに、RAGは、LLMの学習データを更新することなく、新しい情報や知識を組み込むことができるため、LLMのメンテナンスコストを削減>できます。\n\n## RAGの様々な応用例\nRAGは、様々な分野で応用されています。例えば、カスタマーサポートの分野では、RAGを活用することで、顧客からの問い合わせに対して、より迅速かつ正確な回答
+を提供できます。また、医療の分野では、RAGを活用することで、医師が最新の研究論文や臨床データに基づいて、より適切な診断や治療を行うことができます。さらに、金融の分野では、RAGを活用するこ
+とで、アナリストが最新の市場動向や企業情報に基づいて、より正確な投資判断を行うことができます。\n\n## RAGとKurocoの連携\nKurocoはAPIファーストのヘッドレスCMSであり [[1](https://kuroco.app/)], [[2](https://kuroco.app/)], [[3](https://kuroco.app/)]、RAGとの連携が容易です。Kurocoに蓄積されたコンテンツをRAGの知識ソースとして活用することで、LLMはKurocoのコンテンツに基づい
+て、より正確で関連性の高い回答を生成できます。例えば、Kurocoに製品マニュアルやFAQが登録されている場合、RAGを活用することで、顧客からの製品に関する問い合わせに対して、マニュアルやFAQの>情報に基づいて回答を生成できます。\n\n## RAGの今後の展望\nRAGは、LLMの能力を拡張するための重要な技術として、今後ますます発展していくと考えられます。今後は、より高度な検索技術や生成技術
+が開発され、RAGの性能が向上していくことが期待されます。また、RAGは、様々な分野で応用され、私たちの生活や仕事に大きな影響を与える可能性があります。\n\n**結論**\nRAG（検索拡張生成）は、LLMの知識を拡張し、より正確で信頼性の高い回答を生成するための強力なツールです。様々な分野での応用が期待されており、今後の発展が楽しみです。\n\n![RAGの概念図](https://kuroco.app/ja/assets/images/image13-3fca67f6af405037b446436418391d4b.png)\n\n![Kurocoの機能](https://kuroco.app/files/user/img/top/img_function4.png)\n\n![Kurocoの比較](https://kuroco.app/files/user/img/top/img_compare1.png)",
+    "title": "RAG（検索拡張生成）とは？仕組み、メリット、応用例を解説"
+  }
+}
+"###;
+    let ref_index_generator = RefIndexGenerator::new();
+
+    // Expected items in reverse order
+    let expected = RefCell::new(["h", "g", "f", "e", "d", "c", "b", "a"].to_vec());
+
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, 0, true);
+    let mut byte_counter = 0usize;
+    for byte in input.as_bytes() {
+        assert!(json_stream_parser.add_char(&byte).is_ok());
+        if byte_counter != 0 && byte_counter % 40 == 0 {
+            json_stream_parser.flush();
+        }
+        byte_counter += 1;
+    }
+
+    // Testing buffered data
+    let buffered_data = json_stream_parser.get_buffered_data();
+    assert!(buffered_data.is_some());
+    let buffered_data = buffered_data.unwrap();
+    println!("Buf: {}", buffered_data.to_string());
+}

@@ -124,7 +124,16 @@ where F: Fn(Option<Rc<Value>>) -> ()
         if let Some(value_buffer) = self.value_buffer.as_mut() {
             if let Some(output_value) = output_value {
                 let output_value_copy = output_value.as_ref().clone();
-                (*value_buffer).insert_at_pointer(output_value_copy).unwrap(); // If this panics then it is a logic error
+                match self.current_status {
+                    Status::String(_) => {
+                        // In case of String, we can't trust output_value, because any potential flushing removes data from it
+                        // We need to use string_value_buffer in this case
+                        (*value_buffer).insert_at_pointer(Value::String(self.string_value_buffer.clone())).unwrap(); // If this panics then it is a logic error
+                    },
+                    _ => {
+                        (*value_buffer).insert_at_pointer(output_value_copy).unwrap(); // If this panics then it is a logic error
+                    }
+                }
             }
         }
     }
@@ -281,15 +290,15 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                         },
                                         _ => unreachable!("All base types are covered, aren't they?")
                                     };
-                                    self.current_status = Status::Object(StatusObject {
-                                        substatus: SubStatusObject::BeforeKV(false)
-                                    });
                                     self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                     self.on_event_move_up(output_value);
                                     if status_done.done_object {
                                         // Not only the value is completed, but the current object must be too : go back up once again
                                         self.move_up();
                                     }
+                                    self.current_status = Status::Object(StatusObject {
+                                        substatus: SubStatusObject::BeforeKV(false)
+                                    });
                                     return Ok(row);
                                 } else {
                                     // Key does not exist yet => we are returning from the String value for the key : save it and continue
@@ -333,7 +342,6 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     },
                                     _ => unreachable!("All base types are covered, aren't they?")
                                 };
-                                self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
                                 self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                 self.on_event_move_up(output_value);
                                 if status_done.done_array {
@@ -341,6 +349,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     // => go back up once again
                                     self.move_up();
                                 }
+                                self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
                                 return Ok(row);
                             },
                             node::NodeType::Basic => {
