@@ -345,6 +345,7 @@ fn test_flush_for_object_keys() {
     
     let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
     let inputs = [
+        r#"{""#,
         r#"h"#,
         r#"1"#,
         r#"":""#,
@@ -575,10 +576,8 @@ fn test_flush_buffer() {
   }
 }
 "###;
+    let input = input.replace("\n", ""); // Use spaces previously for readability, but remove now to make a valid JSON
     let ref_index_generator = RefIndexGenerator::new();
-
-    // Expected items in reverse order
-    let expected = RefCell::new(["h", "g", "f", "e", "d", "c", "b", "a"].to_vec());
 
     let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, 0, true);
     let mut byte_counter = 0usize;
@@ -594,5 +593,6 @@ fn test_flush_buffer() {
     let buffered_data = json_stream_parser.get_buffered_data();
     assert!(buffered_data.is_some());
     let buffered_data = buffered_data.unwrap();
-    println!("Buf: {}", buffered_data.to_string());
+    let expected_data: Value = serde_json::from_str(&input).unwrap();
+    assert_eq!(&expected_data, buffered_data);
 }

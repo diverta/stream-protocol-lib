@@ -292,13 +292,13 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     };
                                     self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                     self.on_event_move_up(output_value);
+                                    self.current_status = Status::Object(StatusObject {
+                                        substatus: SubStatusObject::BeforeKV(false)
+                                    });
                                     if status_done.done_object {
                                         // Not only the value is completed, but the current object must be too : go back up once again
                                         self.move_up();
                                     }
-                                    self.current_status = Status::Object(StatusObject {
-                                        substatus: SubStatusObject::BeforeKV(false)
-                                    });
                                     return Ok(row);
                                 } else {
                                     // Key does not exist yet => we are returning from the String value for the key : save it and continue
@@ -344,12 +344,12 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 };
                                 self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
                                 self.on_event_move_up(output_value);
+                                self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
                                 if status_done.done_array {
                                     // Not only the value is completed, but the current array must be too
                                     // => go back up once again
                                     self.move_up();
                                 }
-                                self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
                                 return Ok(row);
                             },
                             node::NodeType::Basic => {
