@@ -11,13 +11,15 @@ pub(crate) enum NodeType {
 pub(crate) struct Node {
     pub parent_idx: Option<usize>, // Pointing the parent node if any. Root does not have a parent node
     pub node_type: NodeType,
+    pub node_ignore_output: bool, // Registering within the node whether this node is ignoring output
 }
 
 impl Node {
-    pub fn new(parent_idx: Option<usize>, node_type: NodeType) -> Self {
+    pub fn new(parent_idx: Option<usize>, node_type: NodeType, node_ignore_output: bool) -> Self {
         Self {
             parent_idx,
             node_type,
+            node_ignore_output
         }
     }
 }

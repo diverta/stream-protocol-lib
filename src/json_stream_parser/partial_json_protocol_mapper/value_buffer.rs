@@ -34,40 +34,43 @@ impl ValueBuffer {
         }
     }
 
-    // Not only moves pointer down, but also inserts null value there - as it is expected for it to be replaced
-    pub fn pointer_down(&mut self, key: &str) -> Result<(), String> {
+    // Not only moves pointer down, but optionally also inserts null value there - as it is expected for it to be replaced
+    // Not inserting the placeholder is useful when we are filtering the values, keeping the pointer as-is but without extra insertion
+    pub fn pointer_down(&mut self, key: &str, insert_placeholder: bool) -> Result<(), String> {
         // Validation that going down is applicable
-        match self.root.pointer_mut(&self.pointer) {
-            Some(current_value) => {
-                match current_value {
-                    Value::Null |
-                    Value::Bool(_) |
-                    Value::Number(_) |
-                    Value::String(_) => {
-                        return Err(format!("ValueBuffer: Trying to go down non object or non array"))
-                    }
-                    Value::Array(arr) => {
-                        match key.parse::<usize>() {
-                            Ok(key_int) => {
-                                if key_int == arr.len() {
-                                    (*arr).push(Value::Null);
-                                } else {
-                                    return Err(format!("ValueBuffer: Trying to add invalid array item"))
-                                }
-                            },
-                            Err(_) => {
-                                return Err(format!("ValueBuffer: Trying to go down non integer array key"))
-                            }
+        if insert_placeholder {
+            match self.root.pointer_mut(&self.pointer) {
+                Some(current_value) => {
+                    match current_value {
+                        Value::Null |
+                        Value::Bool(_) |
+                        Value::Number(_) |
+                        Value::String(_) => {
+                            return Err(format!("ValueBuffer: Trying to go down non object or non array"))
                         }
-                    },
-                    Value::Object(map) => {
-                        map.insert(key.to_owned(), Value::Null);
-                    },
-                }
-            },
-            None => {
-                return Err(format!("ValueBuffer: No element at the current pointer"))
-            },
+                        Value::Array(arr) => {
+                            match key.parse::<usize>() {
+                                Ok(key_int) => {
+                                    if key_int == arr.len() {
+                                        (*arr).push(Value::Null);
+                                    } else {
+                                        return Err(format!("ValueBuffer: Trying to add invalid array item"))
+                                    }
+                                },
+                                Err(_) => {
+                                    return Err(format!("ValueBuffer: Trying to go down non integer array key"))
+                                }
+                            }
+                        },
+                        Value::Object(map) => {
+                            map.insert(key.to_owned(), Value::Null);
+                        },
+                    }
+                },
+                None => {
+                    return Err(format!("ValueBuffer: No element at the current pointer"))
+                },
+            }
         }
         // Update pointer
         self.pointer = format!("{}/{key}", self.pointer);

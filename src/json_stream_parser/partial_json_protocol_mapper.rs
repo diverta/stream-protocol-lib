@@ -25,6 +25,7 @@ pub(crate) struct PartialJsonProtocolMapper<F> {
     is_done: bool,
     string_value_buffer: String, // Storing the string buffer that persists across flushes. Used by events
     value_buffer: Option<ValueBuffer>,
+    filter_elements: Option<Vec<String>>
 }
 
 impl<F> PartialJsonProtocolMapper<F>
@@ -33,7 +34,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
     pub(crate) fn new(
         ref_index_generator: RefIndexGenerator,
         current_node_idx: usize,
-        enable_buffering: bool
+        enable_buffering: bool,
+        filter_elements: Option<Vec<String>>,
     ) -> Self {
         let value_buffer = if enable_buffering {
             Some(ValueBuffer::new(json!({})))
@@ -49,16 +51,34 @@ where F: Fn(Option<Rc<Value>>) -> ()
             event_map: HashMap::new(),
             is_done: false,
             string_value_buffer: String::new(),
-            value_buffer
+            value_buffer,
+            filter_elements
         }
     }
 
+    #[inline]
+    fn is_ignoring_current_output(&self) -> bool {
+        return self.node_map.get(&self.current_node_idx).map(|node| node.node_ignore_output).unwrap_or(false);
+    }
+
+    /// If return is false, the output should be ignored
+    #[inline]
     fn on_event_move_down(&mut self, key: &str) {
         self.key_path.move_down_object_or_array(key);
+        if !self.is_ignoring_current_output() {
+            if let Some(current_node) = self.node_map.get_mut(&self.current_node_idx) {
+                // If not ignoring still, confirm filters now
+                if let Some(filter_elements) = self.filter_elements.as_ref() {
+                    if !self.key_path.match_list(filter_elements.iter().collect(), true) {
+                        current_node.node_ignore_output = true;
+                    }
+                }
+            }
+        }
         // Register element begin events
         if let Some(list_maps_for_event) = self.event_map.get(&ParserEvent::OnElementBegin) {
             for event_key in list_maps_for_event.keys() {
-                if self.key_path.match_expr(event_key) {
+                if self.key_path.match_expr(event_key, false) {
                     let event_fns = list_maps_for_event.get(event_key).unwrap();
                     for event_fn in event_fns {
                         event_fn(None);
@@ -75,29 +95,53 @@ where F: Fn(Option<Rc<Value>>) -> ()
             }
             _ => {}
         }
+        let ignoring_current_output = self.is_ignoring_current_output();
         if let Some(value_buffer) = self.value_buffer.as_mut() {
-            value_buffer.pointer_down(key).unwrap(); // Panic here represents a logical error : if identified, to be fixed
-            match &self.current_status {
-                // We should also init object/array in case of nesting
-                Status::Array(_) => {
-                    if let Some(value_buffer) = self.value_buffer.as_mut() {
-                        (*value_buffer).insert_at_pointer(Value::Array(Vec::new())).unwrap(); // If this panics then it is a logic error
-                    }
-                },
-                Status::Object(_) => {
-                    if let Some(value_buffer) = self.value_buffer.as_mut() {
-                        (*value_buffer).insert_at_pointer(Value::Object(Map::new())).unwrap(); // If this panics then it is a logic error
-                    }
-                },
-                _ => {}
+            value_buffer.pointer_down(key, !ignoring_current_output).unwrap(); // Panic here represents a logical error : if identified, to be fixed
+            if !ignoring_current_output {
+                // Only write buffer if not ignoring current
+                match &self.current_status {
+                    // We should also init object/array in case of nesting
+                    Status::Array(_) => {
+                        if let Some(value_buffer) = self.value_buffer.as_mut() {
+                            (*value_buffer).insert_at_pointer(Value::Array(Vec::new())).unwrap(); // If this panics then it is a logic error
+                        }
+                    },
+                    Status::Object(_) => {
+                        if let Some(value_buffer) = self.value_buffer.as_mut() {
+                            (*value_buffer).insert_at_pointer(Value::Object(Map::new())).unwrap(); // If this panics then it is a logic error
+                        }
+                    },
+                    _ => {}
+                }
             }
         }
     }
 
+    #[inline]
+    fn save_value(
+        &mut self,
+        idx: usize,
+        operator: &'static str,
+        mut output_value: Option<Rc<Value>>,
+        move_up_value: Option<Rc<Value>>,
+    ) -> Result<Option<String>, ParseError> {
+        // Cannot use self.is_ignoring_current_output() because current_idx is not always the node we are saving
+        if self.node_map.get(&idx).map(|node| node.node_ignore_output).unwrap_or(false) {
+            output_value = None;
+        }
+        self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
+        self.on_event_move_up(move_up_value);
+        Ok(output_value.map(|output| {
+            self.make_row(idx, operator, output.to_string())
+        }))
+    }
+
+    #[inline]
     fn on_event_move_up(&mut self, value: Option<Rc<Value>>) {
         if let Some(list_maps_for_event) = self.event_map.get(&ParserEvent::OnElementEnd) {
             for event_key in list_maps_for_event.keys() {
-                if self.key_path.match_expr(event_key) {
+                if self.key_path.match_expr(event_key, false) {
                     let event_fns = list_maps_for_event.get(event_key).unwrap();
                     for event_fn in event_fns {
                         // If string, use the buffer
@@ -120,6 +164,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
         }
     }
 
+    #[inline]
+    // This adds additional optional processing, such as buffering the value
     fn on_event_value_completed(&mut self, output_value: Option<Rc<Value>>) {
         if let Some(value_buffer) = self.value_buffer.as_mut() {
             if let Some(output_value) = output_value {
@@ -151,6 +197,19 @@ where F: Fn(Option<Rc<Value>>) -> ()
         format!("{}{}{}\n", idx, operator, data.into())
     }
 
+    /// Builds a new subnode with all necessary processing
+    /// Returns parent_node_idx
+    #[inline]
+    fn new_subnode(&mut self, node_type: NodeType, new_status: Status) -> usize {
+        let new_node_idx = self.ref_index_generator.generate();
+        let parent_node_idx = self.current_node_idx;
+        self.current_node_idx = new_node_idx;
+        self.current_status = new_status; // Become the new type
+        let node_ignore_output = self.node_map.get(&parent_node_idx).map(|n| n.node_ignore_output).unwrap_or(false); // Init to parent's value
+        self.node_map.insert(self.current_node_idx, Node::new(Some(parent_node_idx), node_type, node_ignore_output));
+        parent_node_idx
+    }
+
     #[inline]
     pub(crate) fn add_char(&mut self, c: &u8) -> Result<Option<impl Into<String>>, ParseError> {
         if self.is_done {
@@ -178,7 +237,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                     },
                     _ => NodeType::Basic
                 };
-                self.node_map.insert(self.current_node_idx, Node::new(None, new_node_type));
+                self.node_map.insert(self.current_node_idx, Node::new(None, new_node_type, false));
                 let row: Option<String> = output_value
                     .as_ref()
                     .map(|output|
@@ -217,11 +276,12 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         Status::Null(_) | Status::Bool(_) | Status::Number(_) => OPERATOR_ASSIGN,
                         _ => OPERATOR_APPEND
                     };
-                    self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
-                    self.on_event_move_up(output_value.as_ref().map(|v| Rc::clone(&v)));
-                    return Ok(output_value.map(|output| {
-                        self.make_row(self.current_node_idx, operator, output.to_string())
-                    }));
+                    return self.save_value(
+                        self.current_node_idx,
+                        operator,
+                        output_value.as_ref().map(|v| Rc::clone(&v)),
+                        output_value,
+                    );
                 }
                 let current_idx = self.current_node_idx;
                 let parent_idx = current_node.parent_idx.unwrap();
@@ -233,17 +293,12 @@ where F: Fn(Option<Rc<Value>>) -> ()
                 if parent_node.is_none() {
                     // The parent node (which is now current) doesn't exist : we are done
                     // This should only happen for a top level basic json type (string, number, null, bool)
-                    self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
-                    self.on_event_move_up(output_value.as_ref().map(|v| Rc::clone(&v)));
-                    return Ok(
-                        output_value.map(|output|
-                            self.make_row(
-                                parent_idx,
-                                OPERATOR_ASSIGN, 
-                                output.to_string()
-                            )
-                        )
-                    )
+                    return self.save_value(
+                        parent_idx,
+                        OPERATOR_ASSIGN,
+                        output_value.as_ref().map(|v| Rc::clone(&v)),
+                        output_value
+                    );
                 }
                 
                 let parent_node = parent_node.unwrap();
@@ -258,40 +313,41 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 if potential_key.is_some() {
                                     // The key exists => we are returning from the object value
                                     let key = potential_key.take().unwrap(); // Get the key, emptying the node's parameter
-                                    let row = match current_status {
+                                    let (save_idx, save_operator, save_value): (usize, &str, Option<Rc<Value>>) = match current_status {
                                         // The way to write the row, however, depends on the type
                                         // Basic types, we have to append to the parent object itself
                                         Status::Null(_)|
                                         Status::Bool(_) |
                                         Status::Number(_) => {
                                             let value = output_value.as_ref().unwrap(); // A basic type, when Done, absolutely returns a value
-                                            Some(self.make_row(
+                                            (
                                                 parent_idx,
                                                 OPERATOR_APPEND,
-                                                json!({key: value}).to_string()
-                                            ))
+                                                Some(Rc::new(json!({key: value})))
+                                            )
                                         },
                                         // For strings, we have already initialized it, so append to self
                                         Status::String(_) => {
-                                            if let Some(value) = output_value.as_ref() {
-                                                if value.as_str().unwrap().len() > 0 {
-                                                    Some(self.make_row(
-                                                        current_idx,
-                                                        OPERATOR_APPEND,
-                                                        value.to_string()
-                                                    ))
+                                            (
+                                                current_idx,
+                                                OPERATOR_APPEND,
+                                                if let Some(value) = output_value.as_ref() {
+                                                    Some(Rc::clone(value))
                                                 } else {
+                                                    // Value might not be present if flushed
                                                     None
                                                 }
-                                            } else {
-                                                // Value might not be present if flushed
-                                                None
-                                            }
+                                            )
                                         },
                                         _ => unreachable!("All base types are covered, aren't they?")
                                     };
-                                    self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
-                                    self.on_event_move_up(output_value);
+                                    // TODO : diverging with previous logic of Number type (within object) => check it
+                                    let saved_value = self.save_value(
+                                        save_idx,
+                                        save_operator,
+                                        save_value.as_ref().map(|v| Rc::clone(&v)),
+                                        save_value
+                                    );
                                     self.current_status = Status::Object(StatusObject {
                                         substatus: SubStatusObject::BeforeKV(false)
                                     });
@@ -299,7 +355,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                         // Not only the value is completed, but the current object must be too : go back up once again
                                         self.move_up();
                                     }
-                                    return Ok(row);
+                                    return saved_value;
                                 } else {
                                     // Key does not exist yet => we are returning from the String value for the key : save it and continue
                                     let value = output_value.unwrap(); // String value for the object key must exist
@@ -311,46 +367,50 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 }
                             },
                             node::NodeType::Array(_) => {
-                                let row = match current_status {
+                                let (save_idx, save_operator, save_value): (usize, &str, Option<Rc<Value>>) = match current_status {
                                     // The way to write the row, however, depends on the type
                                     // Basic types, we have to append to the parent object itself
                                     Status::Null(_)|
                                     Status::Bool(_) |
                                     Status::Number(_) => {
                                         let value = output_value.as_ref().unwrap();
-                                        Some(self.make_row(
+                                        (
                                             parent_idx,
                                             OPERATOR_APPEND,
-                                            value.to_string()
-                                        ))
+                                            Some(Rc::clone(&value))
+                                        )
                                     },
                                     // For strings, we have already initialized it, so append to self
                                     Status::String(_) => {
-                                        if let Some(value) = output_value.as_ref() {
-                                            if value.as_str().unwrap().len() > 0 {
-                                                Some(self.make_row(
-                                                    current_idx,
-                                                    OPERATOR_APPEND,
-                                                    value.to_string()
-                                                ))
+                                        (
+                                            current_idx,
+                                            OPERATOR_APPEND,
+                                            if let Some(value) = output_value.as_ref() {
+                                                if value.as_str().unwrap().len() > 0 {
+                                                    Some(Rc::clone(&value))
+                                                } else {
+                                                    None
+                                                }
                                             } else {
                                                 None
                                             }
-                                        } else {
-                                            None
-                                        }
+                                        )
                                     },
                                     _ => unreachable!("All base types are covered, aren't they?")
                                 };
-                                self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
-                                self.on_event_move_up(output_value);
+                                let saved_value = self.save_value(
+                                    save_idx,
+                                    save_operator,
+                                    save_value.as_ref().map(|v| Rc::clone(&v)),
+                                    save_value
+                                );
                                 self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
                                 if status_done.done_array {
                                     // Not only the value is completed, but the current array must be too
                                     // => go back up once again
                                     self.move_up();
                                 }
-                                return Ok(row);
+                                return saved_value;
                             },
                             node::NodeType::Basic => {
                                 unreachable!("Nested data cannot return into non-object or non-array")
@@ -359,27 +419,37 @@ where F: Fn(Option<Rc<Value>>) -> ()
                     },
                     Status::Object(_) | Status::Array(_) => {
                         // Returning from a nested object or array => the data append has already happened, so just move up
-                        match &mut parent_node.node_type {
+                        return match &mut parent_node.node_type {
                             NodeType::Object(ref mut potential_key) => {
                                 *potential_key = None; // On return from a nested item, make sure the object key is unset
-                                self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
-                                self.on_event_move_up(None);
+                                let saved_value = self.save_value(
+                                    0, // irrelevant here
+                                    OPERATOR_APPEND, // irrelevant here
+                                    output_value,
+                                    None
+                                );
                                 self.current_status = Status::Object(StatusObject {
                                     substatus: SubStatusObject::BeforeKV(status_done.comma_matched)
-                                })
+                                });
+                                return saved_value;
                             },
                             NodeType::Array(_) => {
-                                self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
-                                self.on_event_move_up(None);
+                                let saved_value = self.save_value(
+                                    0, // irrelevant here
+                                    OPERATOR_APPEND, // irrelevant here
+                                    output_value,
+                                    None
+                                );
                                 self.current_status = Status::Array(StatusArray {
                                     comma_matched: status_done.comma_matched
                                 });
+                                return saved_value;
                             },
                             node::NodeType::Basic => {
-                                unreachable!("Nested data cannot return into non-object or non-array")
+                                log::error!("stream-protocol-lib error : Nested data cannot return into non-object or non-array");
+                                Ok(None)
                             },
                         }
-                        return Ok(None)
                     },
                     _ => unreachable!("This status should not be possible at this time")
                 }
@@ -396,11 +466,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                 ))
             ) => {
                 // Going down the tree into a basic or String type
-                let new_node_idx = self.ref_index_generator.generate();
-                self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Basic));
-                let parent_node_idx = self.current_node_idx;
-                self.current_node_idx = new_node_idx;
-                self.current_status = new_status; // Become the new type
+                let parent_node_idx = self.new_subnode(NodeType::Basic, new_status);
                 let parent_node = self.node_map.get_mut(&parent_node_idx).unwrap();
                 match &mut parent_node.node_type {
                     NodeType::Object(ref potential_key) => { // Only when we are parsing the string that is the value of the object (because key is existing)
@@ -410,23 +476,27 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 // For string, we need to initialize the row, as we will be appending parts
                                 Status::String(_) => {
                                     Ok(Some(format!("{}{}", // Double initialization : a new index, and a new string at that index
-                                    self.make_row(
-                                        parent_node_idx,
-                                        OPERATOR_APPEND,
-                                        json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
-                                    ),
-                                    self.make_row(
-                                        self.current_node_idx,
-                                        OPERATOR_ASSIGN,
-                                        "\"\"",
-                                    ),
-                                )))
+                                        self.make_row(
+                                            parent_node_idx,
+                                            OPERATOR_APPEND,
+                                            json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, self.current_node_idx)}).to_string(),
+                                        ),
+                                        self.make_row(
+                                            self.current_node_idx,
+                                            OPERATOR_ASSIGN,
+                                            "\"\"",
+                                        ),
+                                    )))
                                 }
                                 Status::Null(_) | Status::Bool(_) | Status::Number(_) => Ok(None),
                                 _ => unreachable!("Status flow is invalid")
                             };
                             self.on_event_move_down(&key_copy);
-                            return result;
+                            if !self.is_ignoring_current_output() {
+                                result
+                            } else {
+                                Ok(None)
+                            }
                         } else {
                             // This String is being used to parse an object's key : do not write now, wait for the value
                             return Ok(None);
@@ -442,7 +512,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     self.make_row(
                                         parent_node_idx,
                                         OPERATOR_APPEND,
-                                        format!("\"{}{}\"", STREAM_VAR_PREFIX, new_node_idx),
+                                        format!("\"{}{}\"", STREAM_VAR_PREFIX, self.current_node_idx),
                                     ),
                                     self.make_row(
                                         self.current_node_idx,
@@ -455,7 +525,11 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             _ => unreachable!("Status flow is invalid")
                         };
                         self.on_event_move_down(&arr_idx_str);
-                        return result;
+                        if !self.is_ignoring_current_output() {
+                            result
+                        } else {
+                            Ok(None)
+                        }
                     },
                     _ => unreachable!("Logic error : String cannot be a child of non-object and non-array")
                 }
@@ -466,13 +540,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                 _current_status @ (Status::Object(_) | Status::Array(_)),
                 Some(new_status @ Status::Object(_))
             ) => {
-                // Going down the tree into a new string : generate new index
-                let new_node_idx = self.ref_index_generator.generate();
-                self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Object(None)));
-                let parent_node_idx = self.current_node_idx;
-                self.current_node_idx = new_node_idx;
-                self.current_status = new_status;
-                let parent_node = self.node_map.get_mut(&parent_node_idx).unwrap();
+                let parent_node_idx = self.new_subnode(NodeType::Object(None), new_status);
+                let parent_node: &mut Node = self.node_map.get_mut(&parent_node_idx).unwrap();
                 match &mut parent_node.node_type {
                     NodeType::Object(Some(key)) => {
                         let key_copy = key.clone(); // To fix borrowing issue
@@ -480,7 +549,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
-                                json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
+                                json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, self.current_node_idx)}).to_string(),
                             ),
                             self.make_row(
                                 self.current_node_idx,
@@ -489,7 +558,11 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             ),
                         )));
                         self.on_event_move_down(&key_copy);
-                        return result;
+                        if !self.is_ignoring_current_output() {
+                            result
+                        } else {
+                            Ok(None)
+                        }
                     },
                     NodeType::Array(arr_idx) => {
                         let arr_idx_str = arr_idx.to_string(); // Converting the current array index (it has not been used yet)
@@ -498,7 +571,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
-                                format!("\"{}{}\"", STREAM_VAR_PREFIX, new_node_idx),
+                                format!("\"{}{}\"", STREAM_VAR_PREFIX, self.current_node_idx),
                             ),
                             self.make_row(
                                 self.current_node_idx,
@@ -507,7 +580,11 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             ),
                         )));
                         self.on_event_move_down(&arr_idx_str);
-                        return result;
+                        if !self.is_ignoring_current_output() {
+                            result
+                        } else {
+                            Ok(None)
+                        }
                     },
                     _ => unreachable!("Logic error : nesting is being made from an object which doesn't have its key")
                 }
@@ -518,12 +595,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                 _current_status @ (Status::Object(_) | Status::Array(_)),
                 Some(new_status @ Status::Array(_))
             ) => {
-                // Going down the tree into a new string : generate new index
-                let new_node_idx = self.ref_index_generator.generate();
-                self.node_map.insert(new_node_idx, Node::new(Some(self.current_node_idx), NodeType::Array(0)));
-                let parent_node_idx = self.current_node_idx;
-                self.current_node_idx = new_node_idx;
-                self.current_status = new_status;
+                let parent_node_idx = self.new_subnode(NodeType::Array(0), new_status);
                 let parent_node = self.node_map.get_mut(&parent_node_idx).unwrap();
                 match &mut parent_node.node_type {
                     NodeType::Object(Some(key)) => {
@@ -532,7 +604,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
-                                json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, new_node_idx)}).to_string(),
+                                json!({&key_copy: format!("{}{}", STREAM_VAR_PREFIX, self.current_node_idx)}).to_string(),
                             ),
                             self.make_row(
                                 self.current_node_idx,
@@ -541,7 +613,11 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             ),
                         )));
                         self.on_event_move_down(&key_copy);
-                        return result;
+                        if !self.is_ignoring_current_output() {
+                            result
+                        } else {
+                            Ok(None)
+                        }
                     },
                     NodeType::Array(arr_idx) => {
                         let arr_idx_str = arr_idx.to_string(); // Converting the current array index (it has not been used yet)
@@ -550,7 +626,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             self.make_row(
                                 parent_node_idx,
                                 OPERATOR_APPEND,
-                                format!("\"{}{}\"", STREAM_VAR_PREFIX, new_node_idx),
+                                format!("\"{}{}\"", STREAM_VAR_PREFIX, self.current_node_idx),
                             ),
                             self.make_row(
                                 self.current_node_idx,
@@ -559,7 +635,11 @@ where F: Fn(Option<Rc<Value>>) -> ()
                             ),
                         )));
                         self.on_event_move_down(&arr_idx_str);
-                        return result;
+                        if !self.is_ignoring_current_output() {
+                            result
+                        } else {
+                            Ok(None)
+                        }
                     },
                     _ => unreachable!("Logic error : nesting is being made from an object which doesn't have its key")
                 }
@@ -611,8 +691,9 @@ where F: Fn(Option<Rc<Value>>) -> ()
                     self.is_done = true;
                 } else {
                     let parent_node = parent_node.unwrap();
-                    match &parent_node.node_type {
-                        NodeType::Object(_) => {
+                    match &mut parent_node.node_type {
+                        NodeType::Object(potential_key) => {
+                            *potential_key = None; // When arriving back up in an object, make sure to unset the key (string key case is handled elsewhere)
                             self.current_status = Status::Object(StatusObject {
                                 substatus: SubStatusObject::BeforeKV(false)
                             });
@@ -641,5 +722,9 @@ where F: Fn(Option<Rc<Value>>) -> ()
             .entry(element)
             .or_insert(Vec::new());
         event_list.push(func);
+    }
+
+    pub fn set_filter(&mut self, filter_elements: Vec<String>) {
+        self.filter_elements = Some(filter_elements);
     }
 }

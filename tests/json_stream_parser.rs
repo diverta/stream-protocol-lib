@@ -1,6 +1,6 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use test_log::test;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, str::FromStr};
 
 use stream_protocol_lib::{json_stream_parser::{JsonStreamParser, ParserEvent}, ref_index_generator::RefIndexGenerator};
 
@@ -8,6 +8,7 @@ use stream_protocol_lib::{json_stream_parser::{JsonStreamParser, ParserEvent}, r
 fn test_unit() {
     let tests = [
         (
+            // Test 0
             r#""a string""#,
             r#"
 2=""
@@ -15,18 +16,21 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 1
             r#"true"#,
             r#"
 2=true
             "#.trim()
         ),
         (
+            // Test 2
             r#" false "#,
             r#"
 2=false
             "#.trim()
         ),
         (
+            // Test 3
             r#"[1,2]"#,
             r#"
 2=[]
@@ -35,6 +39,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 4
             r#" [ 1 , 2 ] "#,
             r#"
 2=[]
@@ -43,6 +48,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 5
             r#"["a","b"]"#,
             r#"
 2=[]
@@ -55,6 +61,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 6
             r#"{
                 "a": "b"
             }"#,
@@ -66,6 +73,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 7
             r#"{
                 "a": {"nested": {"object": "is ok ?"}}
             }"#,
@@ -81,6 +89,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 8
             r#"{
                 "arr": [1,2]
             }"#,
@@ -93,6 +102,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 9
             r#"{
                 "arr": ["a","b"]
             }"#,
@@ -109,6 +119,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 10
             r#"{
                 "parent": {"child": "kid"}
             }"#,
@@ -122,6 +133,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 11
             r#"[
                 { "first_key": "first_val" },
                 { "second_key": "second_val" }
@@ -141,6 +153,7 @@ fn test_unit() {
             "#.trim()
         ),
         (
+            // Test 12
             r#"[
                 [ 1 , 2 , 3 ],
                 ["a","b","c"]
@@ -165,7 +178,9 @@ fn test_unit() {
 10+="c"
             "#.trim()
         ),
-        ( // There is a difference in processing logic with direct parent returns after numbers
+        (
+            // Test 13
+            // There is a difference in processing logic with direct parent returns after numbers
             r#"[
                 [1,2,3],
                 ["a","b","c"]
@@ -190,7 +205,8 @@ fn test_unit() {
 10+="c"
             "#.trim()
         ),
-        ( // There is a difference in processing logic with direct parent returns after numbers
+        (
+            // Test 14
             r#"[{
                 "inner_arr": [{"inner_inner_obj": "val"}]
             }]"#,
@@ -206,39 +222,63 @@ fn test_unit() {
 8=""
 8+="val"
             "#.trim()
+        ),
+        (
+            // Test 15
+            // Testing double up from array (due to it containing integers) into an object
+            r#"{
+                "grand_obj": {
+                    "parent_arr": [1, 2],
+                    "parent_single": "single_child"
+                }
+            }"#,
+            r#"
+2={}
+2+={"grand_obj":"$ke$4"}
+4={}
+4+={"parent_arr":"$ke$6"}
+6=[]
+6+=1
+6+=2
+4+={"parent_single":"$ke$10"}
+10=""
+10+="single_child"
+            "#.trim()
         )
     ];
 
     for (idx, (input, expected_lines)) in tests.iter().enumerate() {
         println!("Running test {idx}...");
         let ref_index_generator = RefIndexGenerator::new();
-        let buffer: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
     
         ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
         let cnt = ref_index_generator.generate(); // 2
         
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, true);
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+            ref_index_generator,
+            cnt,
+            true,
+            None
+        );
 
-        let expected_line_arr: Vec<&str> = expected_lines.split('\n').collect();
+        let expected_line_arr: Vec<&str> = expected_lines
+            .split('\n')
+            .collect();
         
         let mut line_counter = 0;
         for byte in input.as_bytes() {
             let resp = json_stream_parser.add_char(byte);
             assert!(resp.is_ok());
+            let resp = resp.unwrap();
         
-            let mut buffer_b = buffer.borrow_mut();
-            if buffer_b.len() > 0 {
-                // Every non empty buffer is a line (or more) to test
-                let output_rows = String::from_utf8(buffer_b.to_vec()).unwrap();
+            if let Some(out) = resp {
                 // Sometimes output contains multiple rows
-                let output_row_arr = output_rows.trim().split('\n');
+                let output_row_arr: std::str::Split<'_, char> = out.trim().split('\n');
                 for output_row in output_row_arr {
                     assert_eq!(expected_line_arr[line_counter], output_row);
                     line_counter += 1;
                 }
-                buffer_b.clear(); // Simulate dumping the line
             }
-            //println!("{} ==> {}", std::ascii::escape_default(*byte), String::from_utf8(buffer_b.to_vec()).unwrap());
         }
         
         // Testing buffered data
@@ -256,7 +296,12 @@ fn test_flush_regular() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        ref_index_generator,
+        cnt,
+        false,
+        None
+    );
     
     let input = r#"{"key":"Some longer sentence"}"#;
     let expected_line_arr = [
@@ -298,7 +343,12 @@ fn test_flush_inbetween_utf8_boundaries() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        ref_index_generator,
+        cnt,
+        false,
+        None
+    );
     
     let input = r#""東京都飯田橋""#;
     let expected_line_arr = [
@@ -343,7 +393,12 @@ fn test_flush_for_object_keys() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        ref_index_generator,
+        cnt,
+        false,
+        None
+    );
     let inputs = [
         r#"{""#,
         r#"h"#,
@@ -387,7 +442,12 @@ fn test_gpt() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
 
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, cnt, false);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        ref_index_generator,
+        cnt,
+        false,
+        None
+    );
 
     // Testing events
     json_stream_parser.add_event_handler(ParserEvent::OnElementEnd, "references.0".to_string(), Box::new(|value: Option<Rc<Value>>| {
@@ -534,7 +594,12 @@ fn test_gemini() {
     // Expected items in reverse order
     let expected = RefCell::new(["h", "g", "f", "e", "d", "c", "b", "a"].to_vec());
 
-    let mut json_stream_parser = JsonStreamParser::new(ref_index_generator, 0, true)
+    let mut json_stream_parser = JsonStreamParser::new(
+        ref_index_generator,
+        0,
+        true,
+        None
+    )
         .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<Rc<Value>>| {
             assert!(value.is_some());
             let value = value.unwrap(); 
@@ -579,7 +644,12 @@ fn test_flush_buffer() {
     let input = input.replace("\n", ""); // Use spaces previously for readability, but remove now to make a valid JSON
     let ref_index_generator = RefIndexGenerator::new();
 
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(ref_index_generator, 0, true);
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        ref_index_generator,
+        0,
+        true,
+        None
+    );
     let mut byte_counter = 0usize;
     for byte in input.as_bytes() {
         assert!(json_stream_parser.add_char(&byte).is_ok());
@@ -595,4 +665,165 @@ fn test_flush_buffer() {
     let buffered_data = buffered_data.unwrap();
     let expected_data: Value = serde_json::from_str(&input).unwrap();
     assert_eq!(&expected_data, buffered_data);
+}
+
+
+#[test]
+fn test_filters() {
+    let input = r#"{
+        "grand_obj": {
+            "parent": {
+                "child_arr": ["a", "b"],
+                "child_str": "a string",
+                "child_int": 123
+            },
+            "uncle_arr": [1, 2],
+            "uncle_single": "single_child"
+        }
+    }"#;
+    assert!(Value::from_str(input).is_ok());
+
+    for (vec_whitelist, expected_lines, expected_buffer) in [
+        (
+            // Test 0 : no filters
+            None,
+            r#"
+0={}
+0+={"grand_obj":"$ke$2"}
+2={}
+2+={"parent":"$ke$4"}
+4={}
+4+={"child_arr":"$ke$6"}
+6=[]
+6+="$ke$7"
+7=""
+7+="a"
+6+="$ke$8"
+8=""
+8+="b"
+4+={"child_str":"$ke$10"}
+10=""
+10+="a string"
+4+={"child_int":123}
+2+={"uncle_arr":"$ke$14"}
+14=[]
+14+=1
+14+=2
+2+={"uncle_single":"$ke$18"}
+18=""
+18+="single_child"
+            "#,
+            json!({
+                "grand_obj":{
+                    "parent":{
+                        "child_arr":["a","b"],
+                        "child_str":"a string",
+                        "child_int":{"child_int":123}
+                    },
+                    "uncle_arr":[1,2],
+                    "uncle_single":"single_child"
+                }
+            })
+        ),
+        (
+            // Test 1 : explicitly 0 filters
+            Some(Vec::new()),
+            r#"
+0={}
+            "#,
+            json!({})
+        ),
+        (
+            // Test 2
+            Some(Vec::from([
+                "grand_obj.parent".to_owned()
+            ])),
+            r#"
+0={}
+0+={"grand_obj":"$ke$2"}
+2={}
+2+={"parent":"$ke$4"}
+4={}
+4+={"child_arr":"$ke$6"}
+6=[]
+6+="$ke$7"
+7=""
+7+="a"
+6+="$ke$8"
+8=""
+8+="b"
+4+={"child_str":"$ke$10"}
+10=""
+10+="a string"
+4+={"child_int":123}
+"#,
+            json!({
+                "grand_obj":{
+                    "parent":{
+                        "child_arr":["a","b"],
+                        "child_str":"a string",
+                        "child_int":{"child_int":123}
+                    }
+                }
+            })
+        ),
+        (
+            // Test 3
+            Some(Vec::from([
+                "grand_obj.uncle_arr".to_owned(),
+                "grand_obj.uncle_single".to_owned(),
+            ])),
+            r#"
+0={}
+0+={"grand_obj":"$ke$2"}
+2={}
+2+={"uncle_arr":"$ke$14"}
+14=[]
+14+=1
+14+=2
+2+={"uncle_single":"$ke$18"}
+18=""
+18+="single_child"
+            "#,
+            json!({
+                "grand_obj":{
+                    "uncle_arr":[1,2],
+                    "uncle_single":"single_child"
+                }
+            })
+        )
+    ] {
+        let ref_index_generator = RefIndexGenerator::new();
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+            ref_index_generator,
+            0,
+            true,
+            vec_whitelist
+        );
+        let mut line_counter = 0;
+        let expected_line_arr: Vec<&str> = expected_lines
+            .trim()
+            .split('\n')
+            .collect();
+        for byte in input.as_bytes() {
+            let resp = json_stream_parser.add_char(byte);
+            assert!(resp.is_ok());
+            let resp = resp.unwrap();
+        
+            if let Some(out) = resp {
+                // Sometimes output contains multiple rows
+                let output_row_arr: std::str::Split<'_, char> = out.trim().split('\n');
+                for output_row in output_row_arr {
+                    assert_eq!(expected_line_arr[line_counter], output_row);
+                    line_counter += 1;
+                }
+            }
+        }
+        
+        // Testing buffered data
+        let buffered_data = json_stream_parser.get_buffered_data();
+        assert!(buffered_data.is_some());
+        let buffered_data = buffered_data.unwrap();
+        assert_eq!(&expected_buffer, buffered_data);
+    }
 }

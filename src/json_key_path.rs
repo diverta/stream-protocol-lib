@@ -56,7 +56,8 @@ impl JsonKeyPath {
     }
 
     /// Matches an expression which may include a wildcard. Refer to doc of JsonKeyPath for more details
-    pub fn match_expr(&self, expr: &str) -> bool {
+    /// as_prefix: if true, then either of self or expr need to be included in the other (prefix)
+    pub fn match_expr(&self, expr: &str, as_prefix: bool) -> bool {
         // Two cursors that increase at the same time
         let mut expr_idx = 0_usize; 
         let mut current_idx = 0_usize;
@@ -67,7 +68,11 @@ impl JsonKeyPath {
         loop {
             if expr_bytes_len == expr_idx || current_bytes_len == current_idx {
                 // Reached max length for either : only return true if the max length is also reached for the other one
-                return expr_bytes_len == expr_idx && current_bytes_len == current_idx;
+                return if as_prefix {
+                    expr_bytes_len == expr_idx || current_bytes_len == current_idx
+                } else {
+                    expr_bytes_len == expr_idx && current_bytes_len == current_idx
+                }
             }
             if expr_bytes[expr_idx] == b'*' {
                 loop {
@@ -88,5 +93,15 @@ impl JsonKeyPath {
                 current_idx += 1;
             }
         }
+    }
+
+    /// Returns true if any expr in the list matches the 
+    pub fn match_list(&self, expr_list: Vec<&String>, as_prefix: bool) -> bool {
+        for expr in expr_list {
+            if self.match_expr(expr, as_prefix) {
+                return true;
+            }
+        }
+        false
     }
 }

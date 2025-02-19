@@ -8,49 +8,49 @@ fn test_json_key_path() {
     assert!(!json_key_path.move_up());
 
     assert!(json_key_path.move_down_object_or_array("parent_tmp"));
-    assert!(json_key_path.match_expr("parent_tmp"));
-    assert!(!json_key_path.match_expr(""));
+    assert!(json_key_path.match_expr("parent_tmp", false));
+    assert!(!json_key_path.match_expr("", false));
 
     assert!(json_key_path.move_up());
-    assert!(json_key_path.match_expr(""));
-    assert!(!json_key_path.match_expr("parent"));
+    assert!(json_key_path.match_expr("", false));
+    assert!(!json_key_path.match_expr("parent", false));
 
     // Again check that moving up from root is false
     assert!(!json_key_path.move_up());
 
     assert!(json_key_path.move_down_object_or_array("1"));
-    assert!(json_key_path.match_expr("1"));
-    assert!(json_key_path.match_expr("*"));
-    assert!(!json_key_path.match_expr(""));
+    assert!(json_key_path.match_expr("1", false));
+    assert!(json_key_path.match_expr("*", false));
+    assert!(!json_key_path.match_expr("", false));
 
     assert!(json_key_path.move_up());
-    assert!(json_key_path.match_expr(""));
-    assert!(!json_key_path.match_expr("parent"));
+    assert!(json_key_path.match_expr("", false));
+    assert!(!json_key_path.match_expr("parent", false));
 
     assert!(json_key_path.move_down_object_or_array("parent"));
-    assert!(json_key_path.match_expr("*"));
-    assert!(json_key_path.match_expr("parent"));
-    assert!(!json_key_path.match_expr(""));
+    assert!(json_key_path.match_expr("*", false));
+    assert!(json_key_path.match_expr("parent", false));
+    assert!(!json_key_path.match_expr("", false));
 
     assert!(json_key_path.move_down_object_or_array("0"));
-    assert!(json_key_path.match_expr("parent.0"));
-    assert!(json_key_path.match_expr("parent.*"));
-    assert!(json_key_path.match_expr("*.0"));
-    assert!(json_key_path.match_expr("*.*"));
-    assert!(!json_key_path.match_expr("parent.1"));
-    assert!(!json_key_path.match_expr("parent"));
+    assert!(json_key_path.match_expr("parent.0", false));
+    assert!(json_key_path.match_expr("parent.*", false));
+    assert!(json_key_path.match_expr("*.0", false));
+    assert!(json_key_path.match_expr("*.*", false));
+    assert!(!json_key_path.match_expr("parent.1", false));
+    assert!(!json_key_path.match_expr("parent", false));
 
     assert!(json_key_path.move_up());
-    assert!(json_key_path.match_expr("parent"));
-    assert!(json_key_path.match_expr("*"));
-    assert!(!json_key_path.match_expr(""));
-    assert!(!json_key_path.match_expr("parent.0"));
+    assert!(json_key_path.match_expr("parent", false));
+    assert!(json_key_path.match_expr("*", false));
+    assert!(!json_key_path.match_expr("", false));
+    assert!(!json_key_path.match_expr("parent.0", false));
 
     assert!(json_key_path.move_down_object_or_array("1"));
-    assert!(json_key_path.match_expr("parent.1"));
-    assert!(json_key_path.match_expr("parent.*"));
-    assert!(!json_key_path.match_expr("parent.0"));
-    assert!(!json_key_path.match_expr("parent"));
+    assert!(json_key_path.match_expr("parent.1", false));
+    assert!(json_key_path.match_expr("parent.*", false));
+    assert!(!json_key_path.match_expr("parent.0", false));
+    assert!(!json_key_path.match_expr("parent", false));
 
 }
 
@@ -67,5 +67,5 @@ fn test_json_key_path_gemini() {
     assert!(json_key_path.move_down_object_or_array("0"));
     assert!(json_key_path.move_down_object_or_array("text"));
 
-    assert!(json_key_path.match_expr("*.candidates.*.content.parts.*.text"));
+    assert!(json_key_path.match_expr("*.candidates.*.content.parts.*.text", false));
 }

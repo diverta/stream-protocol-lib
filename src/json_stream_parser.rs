@@ -43,9 +43,19 @@ pub enum ParserEvent {
 impl<F> JsonStreamParser<F>
 where F: Fn(Option<Rc<Value>>) -> ()
 {
-    pub fn new(ref_index_generator: RefIndexGenerator, current_node_index: usize, enable_buffering: bool) -> JsonStreamParser<F> {
+    pub fn new(
+        ref_index_generator: RefIndexGenerator,
+        current_node_index: usize,
+        enable_buffering: bool,
+        filter_elements: Option<Vec<String>>,
+    ) -> JsonStreamParser<F> {
         JsonStreamParser {
-            mapper: PartialJsonProtocolMapper::new(ref_index_generator, current_node_index, enable_buffering)
+            mapper: PartialJsonProtocolMapper::new(
+                ref_index_generator,
+                current_node_index,
+                enable_buffering,   
+                filter_elements
+            )
         }
     }
 
@@ -78,6 +88,13 @@ where F: Fn(Option<Rc<Value>>) -> ()
     /// but only when the element is not an Array or an Object - for performance reasons (set to None in all other cases)
     pub fn add_event_handler(&mut self, event: ParserEvent, element: String, func: F) {
         self.mapper.add_event_handler(event, element, func);
+    }
+
+    /// Uses a list of elements to filter the partial JSON to keep
+    /// If this function is used, then by default the parser will not output a JSON unless it matches any element of the filter
+    /// Element is a simple string path to a JSON key. Ex: "parent.child.grandchildren.0.name"
+    pub fn set_filter(&mut self, filter_elements: Vec<String>) {
+        self.mapper.set_filter(filter_elements);
     }
 
     /// Builder style version of add_event_handler method
