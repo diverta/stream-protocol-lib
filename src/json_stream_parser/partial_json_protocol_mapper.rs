@@ -125,9 +125,10 @@ where F: Fn(Option<Rc<Value>>) -> ()
         operator: &'static str,
         mut output_value: Option<Rc<Value>>,
         move_up_value: Option<Rc<Value>>,
+        new_node_idx: usize // This may be different from idx which represents the object new node is being attached to
     ) -> Result<Option<String>, ParseError> {
         // Cannot use self.is_ignoring_current_output() because current_idx is not always the node we are saving
-        if self.node_map.get(&idx).map(|node| node.node_ignore_output).unwrap_or(false) {
+        if self.node_map.get(&new_node_idx).map(|node| node.node_ignore_output).unwrap_or(false) {
             output_value = None;
         }
         self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
@@ -281,6 +282,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         operator,
                         output_value.as_ref().map(|v| Rc::clone(&v)),
                         output_value,
+                        self.current_node_idx,
                     );
                 }
                 let current_idx = self.current_node_idx;
@@ -297,7 +299,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         parent_idx,
                         OPERATOR_ASSIGN,
                         output_value.as_ref().map(|v| Rc::clone(&v)),
-                        output_value
+                        output_value,
+                        current_idx
                     );
                 }
                 
@@ -346,7 +349,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                         save_idx,
                                         save_operator,
                                         save_value.as_ref().map(|v| Rc::clone(&v)),
-                                        save_value
+                                        save_value,
+                                        current_idx
                                     );
                                     self.current_status = Status::Object(StatusObject {
                                         substatus: SubStatusObject::BeforeKV(false)
@@ -402,7 +406,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     save_idx,
                                     save_operator,
                                     save_value.as_ref().map(|v| Rc::clone(&v)),
-                                    save_value
+                                    save_value,
+                                    current_idx
                                 );
                                 self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
                                 if status_done.done_array {
@@ -426,7 +431,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     0, // irrelevant here
                                     OPERATOR_APPEND, // irrelevant here
                                     output_value,
-                                    None
+                                    None,
+                                    0, // irrelevant here
                                 );
                                 self.current_status = Status::Object(StatusObject {
                                     substatus: SubStatusObject::BeforeKV(status_done.comma_matched)
@@ -438,7 +444,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     0, // irrelevant here
                                     OPERATOR_APPEND, // irrelevant here
                                     output_value,
-                                    None
+                                    None,
+                                    0, // irrelevant here
                                 );
                                 self.current_status = Status::Array(StatusArray {
                                     comma_matched: status_done.comma_matched

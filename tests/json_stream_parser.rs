@@ -827,3 +827,70 @@ fn test_filters() {
         assert_eq!(&expected_buffer, buffered_data);
     }
 }
+
+#[test]
+fn test_sample() {
+    let input = r##"{
+        "errors":[],
+        "messages":[],
+        "query":"サポート体制はどのようになっていますか？",
+        "simplified_query":"サポート体制はどのようになっていますか？",
+        "args":{"proper_nouns":"None","categories":["Documents-JA2"],"optimized_query":"support system overview"},
+        "fallback_args":{"vector_search":"support system overview"},
+        "server_timings":[
+            {"key":"AI_completions","cached":true,"dur":20},{"key":"AI_optimize_query","cached":true,"dur":11},
+            {"key":"AI_embeddings","cached":true,"dur":18},{"key":"AI_embeddings","cached":true,"dur":2}
+        ],
+        "contents_length": 94911,
+        "list":[
+            {
+                "subject":"kuroco_infrastructure1.pdf",
+                "slug":"kuroco-app-files-sheets-en-kuroco_infrastructure-pdf",
+                "topics_group_id":8,
+                "contents_type_nm":"Documents-JA2",
+                "vector_distance":0.625,
+                "contents":"contents"
+            },
+            {
+                "subject":"kuroco_infrastructur2e.pdf",
+                "slug":"kuroco-app-files-sheets-en-kuroco_infrastructure-pdf",
+                "topics_group_id":8,
+                "contents_type_nm":"Documents-JA2",
+                "vector_distance":0.625,
+                "contents":"contents"
+            }
+        ]
+    }
+    "##;
+
+    let ref_index_generator = RefIndexGenerator::new();
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        ref_index_generator,
+        0,
+        true,
+        Some(Vec::from([
+            "list.*.subject".to_owned()
+        ]))
+    );
+    let mut line_counter = 0;
+    for byte in input.as_bytes() {
+        let resp = json_stream_parser.add_char(byte);
+        assert!(resp.is_ok());
+        let resp = resp.unwrap();
+    
+        if let Some(out) = resp {
+            // Sometimes output contains multiple rows
+            let output_row_arr: std::str::Split<'_, char> = out.trim().split('\n');
+            for output_row in output_row_arr {
+                //assert_eq!(expected_line_arr[line_counter], output_row);
+                println!("{output_row}");
+                line_counter += 1;
+            }
+        }
+    }
+    
+    // Testing buffered data
+    let buffered_data = json_stream_parser.get_buffered_data();
+    assert!(buffered_data.is_some());
+    let buffered_data = buffered_data.unwrap();
+}
