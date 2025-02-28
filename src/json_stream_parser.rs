@@ -1,5 +1,6 @@
 use derivative::Derivative;
 use error::ParseError;
+use parser_options::ParserOptions;
 use partial_json_protocol_mapper::PartialJsonProtocolMapper;
 use serde_json::Value;
 use status::{Status, StatusTrait};
@@ -10,6 +11,8 @@ pub(crate) mod error;
 //pub(crate) mod json_tree;
 pub(crate) mod partial_json_protocol_mapper;
 pub(crate) mod status;
+
+pub mod parser_options;
 
 use std::rc::Rc;
 #[cfg( feature = "async" )] use std::{io::Error, task::Poll};
@@ -47,14 +50,14 @@ where F: Fn(Option<Rc<Value>>) -> ()
         ref_index_generator: RefIndexGenerator,
         current_node_index: usize,
         enable_buffering: bool,
-        filter_elements: Option<Vec<String>>,
+        parser_options: ParserOptions,
     ) -> JsonStreamParser<F> {
         JsonStreamParser {
             mapper: PartialJsonProtocolMapper::new(
                 ref_index_generator,
                 current_node_index,
                 enable_buffering,   
-                filter_elements
+                parser_options
             )
         }
     }
@@ -93,8 +96,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
     /// Uses a list of elements to filter the partial JSON to keep
     /// If this function is used, then by default the parser will not output a JSON unless it matches any element of the filter
     /// Element is a simple string path to a JSON key. Ex: "parent.child.grandchildren.0.name"
-    pub fn set_filter(&mut self, filter_elements: Vec<String>) {
-        self.mapper.set_filter(filter_elements);
+    pub fn set_options(&mut self, parser_options: ParserOptions) {
+        self.mapper.set_options(parser_options);
     }
 
     /// Builder style version of add_event_handler method

@@ -5,7 +5,7 @@ use node::{Node, NodeType};
 use serde_json::{json, Map, Value};
 use value_buffer::ValueBuffer;
 
-use super::{error::ParseError, status::{status_none::StatusNone, status_object::{StatusObject, SubStatusObject}}, ParserEvent, Status, StatusTrait};
+use super::{error::ParseError, parser_options::ParserOptions, status::{status_none::StatusNone, status_object::{StatusObject, SubStatusObject}}, ParserEvent, Status, StatusTrait};
 
 mod node;
 mod value_buffer;
@@ -25,7 +25,7 @@ pub(crate) struct PartialJsonProtocolMapper<F> {
     is_done: bool,
     string_value_buffer: String, // Storing the string buffer that persists across flushes. Used by events
     value_buffer: Option<ValueBuffer>,
-    filter_elements: Option<Vec<String>>
+    parser_options: ParserOptions,
 }
 
 impl<F> PartialJsonProtocolMapper<F>
@@ -35,7 +35,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
         ref_index_generator: RefIndexGenerator,
         current_node_idx: usize,
         enable_buffering: bool,
-        filter_elements: Option<Vec<String>>,
+        parser_options: ParserOptions,
     ) -> Self {
         let value_buffer = if enable_buffering {
             Some(ValueBuffer::new(json!({})))
@@ -52,13 +52,18 @@ where F: Fn(Option<Rc<Value>>) -> ()
             is_done: false,
             string_value_buffer: String::new(),
             value_buffer,
-            filter_elements
+            parser_options
         }
     }
 
     #[inline]
     fn is_ignoring_current_output(&self) -> bool {
         return self.node_map.get(&self.current_node_idx).map(|node| node.node_ignore_output).unwrap_or(false);
+    }
+
+    #[inline]
+    fn is_ignoring_current_buffer(&self) -> bool {
+        return self.node_map.get(&self.current_node_idx).map(|node| node.node_ignore_buffer).unwrap_or(false);
     }
 
     /// If return is false, the output should be ignored
@@ -68,9 +73,14 @@ where F: Fn(Option<Rc<Value>>) -> ()
         if !self.is_ignoring_current_output() {
             if let Some(current_node) = self.node_map.get_mut(&self.current_node_idx) {
                 // If not ignoring still, confirm filters now
-                if let Some(filter_elements) = self.filter_elements.as_ref() {
-                    if !self.key_path.match_list(filter_elements.iter().collect(), true) {
+                if let Some(output_whitelist) = self.parser_options.filter.output_whitelist.as_ref() {
+                    if !self.key_path.match_list(output_whitelist.iter().collect(), true) {
                         current_node.node_ignore_output = true;
+                    }
+                }
+                if let Some(buffer_whitelist) = self.parser_options.filter.buffer_whitelist.as_ref() {
+                    if !self.key_path.match_list(buffer_whitelist.iter().collect(), true) {
+                        current_node.node_ignore_buffer = true;
                     }
                 }
             }
@@ -95,10 +105,10 @@ where F: Fn(Option<Rc<Value>>) -> ()
             }
             _ => {}
         }
-        let ignoring_current_output = self.is_ignoring_current_output();
+        let ignoring_current_buffer = self.is_ignoring_current_buffer();
         if let Some(value_buffer) = self.value_buffer.as_mut() {
-            value_buffer.pointer_down(key, !ignoring_current_output).unwrap(); // Panic here represents a logical error : if identified, to be fixed
-            if !ignoring_current_output {
+            value_buffer.pointer_down(key, !ignoring_current_buffer).unwrap(); // Panic here represents a logical error : if identified, to be fixed
+            if !ignoring_current_buffer {
                 // Only write buffer if not ignoring current
                 match &self.current_status {
                     // We should also init object/array in case of nesting
@@ -128,10 +138,15 @@ where F: Fn(Option<Rc<Value>>) -> ()
         new_node_idx: usize // This may be different from idx which represents the object new node is being attached to
     ) -> Result<Option<String>, ParseError> {
         // Cannot use self.is_ignoring_current_output() because current_idx is not always the node we are saving
+        let buffer_value = if self.node_map.get(&new_node_idx).map(|node| node.node_ignore_buffer).unwrap_or(false) {
+            None
+        } else {
+            output_value.as_ref()
+        };
+        self.on_event_value_completed(buffer_value.map(|val| Rc::clone(&val)));
         if self.node_map.get(&new_node_idx).map(|node| node.node_ignore_output).unwrap_or(false) {
             output_value = None;
         }
-        self.on_event_value_completed(output_value.as_ref().map(|val| Rc::clone(&val)));
         self.on_event_move_up(move_up_value);
         Ok(output_value.map(|output| {
             self.make_row(idx, operator, output.to_string())
@@ -167,9 +182,9 @@ where F: Fn(Option<Rc<Value>>) -> ()
 
     #[inline]
     // This adds additional optional processing, such as buffering the value
-    fn on_event_value_completed(&mut self, output_value: Option<Rc<Value>>) {
+    fn on_event_value_completed(&mut self, buffer_value: Option<Rc<Value>>) {
         if let Some(value_buffer) = self.value_buffer.as_mut() {
-            if let Some(output_value) = output_value {
+            if let Some(output_value) = buffer_value {
                 let output_value_copy = output_value.as_ref().clone();
                 match self.current_status {
                     Status::String(_) => {
@@ -206,8 +221,15 @@ where F: Fn(Option<Rc<Value>>) -> ()
         let parent_node_idx = self.current_node_idx;
         self.current_node_idx = new_node_idx;
         self.current_status = new_status; // Become the new type
-        let node_ignore_output = self.node_map.get(&parent_node_idx).map(|n| n.node_ignore_output).unwrap_or(false); // Init to parent's value
-        self.node_map.insert(self.current_node_idx, Node::new(Some(parent_node_idx), node_type, node_ignore_output));
+        let (node_ignore_output, node_ignore_buffer) = self.node_map
+            .get(&parent_node_idx)
+            .map(|n| (n.node_ignore_output, n.node_ignore_buffer)).unwrap_or((false, false)); // Init to parent's value
+        self.node_map.insert(self.current_node_idx, Node::new(
+            Some(parent_node_idx),
+            node_type,
+            node_ignore_output,
+            node_ignore_buffer
+        ));
         parent_node_idx
     }
 
@@ -238,7 +260,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                     },
                     _ => NodeType::Basic
                 };
-                self.node_map.insert(self.current_node_idx, Node::new(None, new_node_type, false));
+                self.node_map.insert(self.current_node_idx, Node::new(None, new_node_type, false, false));
                 let row: Option<String> = output_value
                     .as_ref()
                     .map(|output|
@@ -731,7 +753,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
         event_list.push(func);
     }
 
-    pub fn set_filter(&mut self, filter_elements: Vec<String>) {
-        self.filter_elements = Some(filter_elements);
+    pub fn set_options(&mut self, parser_options: ParserOptions) {
+        self.parser_options = parser_options;
     }
 }

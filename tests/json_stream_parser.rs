@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use test_log::test;
 use std::{cell::RefCell, rc::Rc, str::FromStr};
 
-use stream_protocol_lib::{json_stream_parser::{JsonStreamParser, ParserEvent}, ref_index_generator::RefIndexGenerator};
+use stream_protocol_lib::{json_stream_parser::{parser_options::ParserOptions, JsonStreamParser, ParserEvent}, ref_index_generator::RefIndexGenerator};
 
 #[test]
 fn test_unit() {
@@ -258,7 +258,7 @@ fn test_unit() {
             ref_index_generator,
             cnt,
             true,
-            None
+            ParserOptions::default()
         );
 
         let expected_line_arr: Vec<&str> = expected_lines
@@ -300,7 +300,7 @@ fn test_flush_regular() {
         ref_index_generator,
         cnt,
         false,
-        None
+        ParserOptions::default()
     );
     
     let input = r#"{"key":"Some longer sentence"}"#;
@@ -347,7 +347,7 @@ fn test_flush_inbetween_utf8_boundaries() {
         ref_index_generator,
         cnt,
         false,
-        None
+        ParserOptions::default()
     );
     
     let input = r#""東京都飯田橋""#;
@@ -397,7 +397,7 @@ fn test_flush_for_object_keys() {
         ref_index_generator,
         cnt,
         false,
-        None
+        ParserOptions::default()
     );
     let inputs = [
         r#"{""#,
@@ -446,7 +446,7 @@ fn test_gpt() {
         ref_index_generator,
         cnt,
         false,
-        None
+        ParserOptions::default()
     );
 
     // Testing events
@@ -598,7 +598,7 @@ fn test_gemini() {
         ref_index_generator,
         0,
         true,
-        None
+        ParserOptions::default()
     )
         .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<Rc<Value>>| {
             assert!(value.is_some());
@@ -648,7 +648,7 @@ fn test_flush_buffer() {
         ref_index_generator,
         0,
         true,
-        None
+        ParserOptions::default()
     );
     let mut byte_counter = 0usize;
     for byte in input.as_bytes() {
@@ -798,7 +798,7 @@ fn test_filters() {
             ref_index_generator,
             0,
             true,
-            vec_whitelist
+            ParserOptions::new_with_filter_output_whitelist(vec_whitelist)
         );
         let mut line_counter = 0;
         let expected_line_arr: Vec<&str> = expected_lines
@@ -829,7 +829,7 @@ fn test_filters() {
 }
 
 #[test]
-fn test_sample() {
+fn test_filters_both() {
     let input = r##"{
         "errors":[],
         "messages":[],
@@ -863,34 +863,226 @@ fn test_sample() {
     }
     "##;
 
+    for (output_whitelist, buffer_whitelist, expected_output, expected_buffer) in [
+        (
+            // Filtered output, full buffer
+            Some(Vec::from(["list.*.subject".to_string()])),
+            None,
+            r##"0={}
+0+={"list":"$ke$55"}
+55=[]
+55+="$ke$56"
+56={}
+56+={"subject":"$ke$58"}
+58=""
+58+="kuroco_infrastructure1.pdf"
+55+="$ke$69"
+69={}
+69+={"subject":"$ke$71"}
+71=""
+71+="kuroco_infrastructur2e.pdf"
+"##,
+            r#"{"errors":[],"messages":[],"query":"サポート体制はどのようになっていますか？","simplified_query":"サポート体制はどのようになっていますか？","args":{"proper_nouns":"None","categories":["Documents-JA2"],"optimized_query":"support system overview"},"fallback_args":{"vector_search":"support system overview"},"server_timings":[{"key":"AI_completions","cached":{"cached":true},"dur":{"dur":20}},{"key":"AI_optimize_query","cached":{"cached":true},"dur":{"dur":11}},{"key":"AI_embeddings","cached":{"cached":true},"dur":{"dur":18}},{"key":"AI_embeddings","cached":{"cached":true},"dur":{"dur":2}}],"contents_length":{"contents_length":94911},"list":[{"subject":"kuroco_infrastructure1.pdf","slug":"kuroco-app-files-sheets-en-kuroco_infrastructure-pdf","topics_group_id":{"topics_group_id":8},"contents_type_nm":"Documents-JA2","vector_distance":{"vector_distance":0.625},"contents":"contents"},{"subject":"kuroco_infrastructur2e.pdf","slug":"kuroco-app-files-sheets-en-kuroco_infrastructure-pdf","topics_group_id":{"topics_group_id":8},"contents_type_nm":"Documents-JA2","vector_distance":{"vector_distance":0.625},"contents":"contents"}]}"#
+        ),
+        (
+            // Full output, filtered buffer
+            None,
+            Some(Vec::from(["list.*.subject".to_string()])),
+            r##"0={}
+0+={"errors":"$ke$2"}
+2=[]
+0+={"messages":"$ke$4"}
+4=[]
+0+={"query":"$ke$6"}
+6=""
+6+="サポート体制はどのようになっていますか？"
+0+={"simplified_query":"$ke$8"}
+8=""
+8+="サポート体制はどのようになっていますか？"
+0+={"args":"$ke$10"}
+10={}
+10+={"proper_nouns":"$ke$12"}
+12=""
+12+="None"
+10+={"categories":"$ke$14"}
+14=[]
+14+="$ke$15"
+15=""
+15+="Documents-JA2"
+10+={"optimized_query":"$ke$17"}
+17=""
+17+="support system overview"
+0+={"fallback_args":"$ke$19"}
+19={}
+19+={"vector_search":"$ke$21"}
+21=""
+21+="support system overview"
+0+={"server_timings":"$ke$23"}
+23=[]
+23+="$ke$24"
+24={}
+24+={"key":"$ke$26"}
+26=""
+26+="AI_completions"
+24+={"cached":true}
+24+={"dur":20}
+23+="$ke$31"
+31={}
+31+={"key":"$ke$33"}
+33=""
+33+="AI_optimize_query"
+31+={"cached":true}
+31+={"dur":11}
+23+="$ke$38"
+38={}
+38+={"key":"$ke$40"}
+40=""
+40+="AI_embeddings"
+38+={"cached":true}
+38+={"dur":18}
+23+="$ke$45"
+45={}
+45+={"key":"$ke$47"}
+47=""
+47+="AI_embeddings"
+45+={"cached":true}
+45+={"dur":2}
+0+={"contents_length":94911}
+0+={"list":"$ke$55"}
+55=[]
+55+="$ke$56"
+56={}
+56+={"subject":"$ke$58"}
+58=""
+58+="kuroco_infrastructure1.pdf"
+56+={"slug":"$ke$60"}
+60=""
+60+="kuroco-app-files-sheets-en-kuroco_infrastructure-pdf"
+56+={"topics_group_id":8}
+56+={"contents_type_nm":"$ke$64"}
+64=""
+64+="Documents-JA2"
+56+={"vector_distance":0.625}
+56+={"contents":"$ke$68"}
+68=""
+68+="contents"
+55+="$ke$69"
+69={}
+69+={"subject":"$ke$71"}
+71=""
+71+="kuroco_infrastructur2e.pdf"
+69+={"slug":"$ke$73"}
+73=""
+73+="kuroco-app-files-sheets-en-kuroco_infrastructure-pdf"
+69+={"topics_group_id":8}
+69+={"contents_type_nm":"$ke$77"}
+77=""
+77+="Documents-JA2"
+69+={"vector_distance":0.625}
+69+={"contents":"$ke$81"}
+81=""
+81+="contents"
+"##,
+            r#"{"list":[{"subject":"kuroco_infrastructure1.pdf"},{"subject":"kuroco_infrastructur2e.pdf"}]}"#
+        ),
+    ] {
+        let ref_index_generator = RefIndexGenerator::new();
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+            ref_index_generator,
+            0,
+            true,
+            ParserOptions::new_with_filter_output_buffer_whitelist(
+                output_whitelist,
+                buffer_whitelist
+            )
+        );
+        let mut line_counter = 0;
+        for byte in input.as_bytes() {
+            let resp = json_stream_parser.add_char(byte);
+            assert!(resp.is_ok());
+            let resp = resp.unwrap();
+        
+            let expected_line_arr: Vec<&str> = expected_output
+                .trim()
+                .split('\n')
+                .collect();
+            if let Some(out) = resp {
+                // Sometimes output contains multiple rows
+                let output_row_arr: std::str::Split<'_, char> = out.trim().split('\n');
+                for output_row in output_row_arr {
+                    assert_eq!(expected_line_arr[line_counter], output_row);
+                    line_counter += 1;
+                }
+            }
+        }
+        
+        // Testing buffered data
+        let buffered_data = json_stream_parser.get_buffered_data();
+        assert!(buffered_data.is_some());
+        let buffered_data = buffered_data.unwrap();
+        assert_eq!(buffered_data.to_string().as_str(), expected_buffer);
+    }
+}
+
+#[test]
+fn test_edge_case_1() {
+}
+
+#[test]
+fn test_gemini2() {
+    let input = r#"
+    {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "{\n  \"next_action\": \"proceed\"\n}"
+                }
+              ],
+              "role": "model"     
+            },
+            "finishReason": "STOP",
+            "avgLogprobs": -1.7884975442519556e-07
+          }
+        ],
+        "usageMetadata": {  
+          "promptTokenCount": 483,
+          "candidatesTokenCount": 13,
+          "totalTokenCount": 496,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT", 
+              "tokenCount": 483
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 13    
+            }
+          ]
+        },
+        "modelVersion": "gemini-2.0-flash"
+      }"#;
     let ref_index_generator = RefIndexGenerator::new();
+
     let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
         ref_index_generator,
         0,
         true,
-        Some(Vec::from([
-            "list.*.subject".to_owned()
-        ]))
+        ParserOptions::default()
     );
-    let mut line_counter = 0;
     for byte in input.as_bytes() {
-        let resp = json_stream_parser.add_char(byte);
-        assert!(resp.is_ok());
-        let resp = resp.unwrap();
-    
-        if let Some(out) = resp {
-            // Sometimes output contains multiple rows
-            let output_row_arr: std::str::Split<'_, char> = out.trim().split('\n');
-            for output_row in output_row_arr {
-                //assert_eq!(expected_line_arr[line_counter], output_row);
-                println!("{output_row}");
-                line_counter += 1;
-            }
+        let output = json_stream_parser.add_char(&byte);
+        assert!(output.is_ok());
+        if let Some(_output) = output.unwrap() {
+            //println!("{}", _output); // For debugging
         }
     }
-    
+
     // Testing buffered data
     let buffered_data = json_stream_parser.get_buffered_data();
     assert!(buffered_data.is_some());
-    let buffered_data = buffered_data.unwrap();
+    //println!("{}", buffered_data.unwrap()); // For debugging
 }
