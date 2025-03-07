@@ -667,23 +667,26 @@ fn test_flush_buffer() {
     assert_eq!(&expected_data, buffered_data);
 }
 
-
 #[test]
-fn test_filters() {
+fn test_filter_output() {
     let input = r#"{
         "grand_obj": {
-            "parent": {
+            "parent_obj": {
                 "child_arr": ["a", "b"],
                 "child_str": "a string",
-                "child_int": 123
+                "child_int": 123,
+                "child_bool": true,
+                "child_null": null
             },
             "uncle_arr": [1, 2],
             "uncle_single": "single_child"
         }
     }"#;
     assert!(Value::from_str(input).is_ok());
+    // Because we test for different output filters only, buffered value should always be the same
+    let expected_buffer: Value = serde_json::from_str(input).unwrap();
 
-    for (vec_whitelist, expected_lines, expected_buffer) in [
+    for (vec_whitelist, expected_lines) in [
         (
             // Test 0 : no filters
             None,
@@ -691,7 +694,7 @@ fn test_filters() {
 0={}
 0+={"grand_obj":"$ke$2"}
 2={}
-2+={"parent":"$ke$4"}
+2+={"parent_obj":"$ke$4"}
 4={}
 4+={"child_arr":"$ke$6"}
 6=[]
@@ -705,33 +708,23 @@ fn test_filters() {
 10=""
 10+="a string"
 4+={"child_int":123}
-2+={"uncle_arr":"$ke$14"}
-14=[]
-14+=1
-14+=2
-2+={"uncle_single":"$ke$18"}
-18=""
-18+="single_child"
-            "#,
-            json!({
-                "grand_obj":{
-                    "parent":{
-                        "child_arr":["a","b"],
-                        "child_str":"a string",
-                        "child_int":{"child_int":123}
-                    },
-                    "uncle_arr":[1,2],
-                    "uncle_single":"single_child"
-                }
-            })
+4+={"child_bool":true}
+4+={"child_null":null}
+2+={"uncle_arr":"$ke$18"}
+18=[]
+18+=1
+18+=2
+2+={"uncle_single":"$ke$22"}
+22=""
+22+="single_child"
+            "#
         ),
         (
             // Test 1 : explicitly 0 filters
             Some(Vec::new()),
             r#"
 0={}
-            "#,
-            json!({})
+            "#
         ),
         (
             // Test 2
@@ -742,7 +735,7 @@ fn test_filters() {
 0={}
 0+={"grand_obj":"$ke$2"}
 2={}
-2+={"parent":"$ke$4"}
+2+={"parent_obj":"$ke$4"}
 4={}
 4+={"child_arr":"$ke$6"}
 6=[]
@@ -756,16 +749,9 @@ fn test_filters() {
 10=""
 10+="a string"
 4+={"child_int":123}
-"#,
-            json!({
-                "grand_obj":{
-                    "parent":{
-                        "child_arr":["a","b"],
-                        "child_str":"a string",
-                        "child_int":{"child_int":123}
-                    }
-                }
-            })
+4+={"child_bool":true}
+4+={"child_null":null}
+"#
         ),
         (
             // Test 3
@@ -777,14 +763,154 @@ fn test_filters() {
 0={}
 0+={"grand_obj":"$ke$2"}
 2={}
-2+={"uncle_arr":"$ke$14"}
-14=[]
-14+=1
-14+=2
-2+={"uncle_single":"$ke$18"}
-18=""
-18+="single_child"
+2+={"uncle_arr":"$ke$18"}
+18=[]
+18+=1
+18+=2
+2+={"uncle_single":"$ke$22"}
+22=""
+22+="single_child"
             "#,
+        )
+    ] {
+        let ref_index_generator = RefIndexGenerator::new();
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+            ref_index_generator,
+            0,
+            true,
+            ParserOptions::new_with_filter_output_whitelist(vec_whitelist)
+        );
+        let mut line_counter = 0;
+        let expected_line_arr: Vec<&str> = expected_lines
+            .trim()
+            .split('\n')
+            .collect();
+        for byte in input.as_bytes() {
+            let resp = json_stream_parser.add_char(byte);
+            assert!(resp.is_ok());
+            let resp = resp.unwrap();
+        
+            if let Some(out) = resp {
+                // Sometimes output contains multiple rows
+                let output_row_arr: std::str::Split<'_, char> = out.trim().split('\n');
+                for output_row in output_row_arr {
+                    assert_eq!(expected_line_arr[line_counter], output_row);
+                    line_counter += 1;
+                }
+            }
+        }
+        
+        // Testing buffered data
+        let buffered_data = json_stream_parser.get_buffered_data();
+        assert!(buffered_data.is_some());
+        let buffered_data = buffered_data.unwrap();
+        assert_eq!(&expected_buffer, buffered_data);
+    }
+}
+
+#[test]
+fn test_filter_buffer() {
+    let input = r#"{
+        "grand_obj": {
+            "parent_obj": {
+                "child_arr": ["a", "b"],
+                "child_str": "a string",
+                "child_int": 123,
+                "child_bool": true,
+                "child_null": null
+            },
+            "parent_arr": [
+                ["a", "b"],
+                "a string",
+                123,
+                true,
+                null
+            ],
+            "uncle_arr": [1, 2],
+            "uncle_single": "single_child"
+        }
+    }"#;
+    assert!(Value::from_str(input).is_ok());
+    // Because we test for different output filters only, buffered value should always be the same
+    let expected_output = r#"
+0={}
+0+={"grand_obj":"$ke$2"}
+2={}
+2+={"parent_obj":"$ke$4"}
+4={}
+4+={"child_arr":"$ke$6"}
+6=[]
+6+="$ke$7"
+7=""
+7+="a"
+6+="$ke$8"
+8=""
+8+="b"
+4+={"child_str":"$ke$10"}
+10=""
+10+="a string"
+4+={"child_int":123}
+4+={"child_bool":true}
+4+={"child_null":null}
+2+={"parent_arr":"$ke$18"}
+18=[]
+18+="$ke$19"
+19=[]
+19+="$ke$20"
+20=""
+20+="a"
+19+="$ke$21"
+21=""
+21+="b"
+18+="$ke$22"
+22=""
+22+="a string"
+18+=123
+18+=true
+18+=null
+2+={"uncle_arr":"$ke$27"}
+27=[]
+27+=1
+27+=2
+2+={"uncle_single":"$ke$31"}
+31=""
+31+="single_child"
+            "#;
+
+    for (vec_whitelist, expected_buffer) in [
+        (
+            // Test 0 : no filters
+            None,
+            serde_json::from_str(input).unwrap()
+        ),
+        (
+            // Test 1 : explicitly 0 filters
+            Some(Vec::new()),
+            json!({})
+        ),
+        (
+            // Test 2
+            Some(Vec::from([
+                "grand_obj.parent_obj".to_owned()
+            ])),
+            json!({
+                "grand_obj":{
+                    "parent_obj":{
+                        "child_arr":["a","b"],
+                        "child_str":"a string",
+                        "child_int":123,
+                        "child_bool":true,
+                        "child_null":null
+                    }
+                }
+            })
+        ),
+        (
+            // Test 3
+            Some(Vec::from([
+                "grand_obj.uncle_arr".to_owned(),
+                "grand_obj.uncle_single".to_owned(),
+            ])),
             json!({
                 "grand_obj":{
                     "uncle_arr":[1,2],
@@ -798,10 +924,10 @@ fn test_filters() {
             ref_index_generator,
             0,
             true,
-            ParserOptions::new_with_filter_output_whitelist(vec_whitelist)
+            ParserOptions::new_with_filter_buffer_whitelist(vec_whitelist)
         );
         let mut line_counter = 0;
-        let expected_line_arr: Vec<&str> = expected_lines
+        let expected_line_arr: Vec<&str> = expected_output
             .trim()
             .split('\n')
             .collect();
@@ -860,8 +986,7 @@ fn test_filters_both() {
                 "contents":"contents"
             }
         ]
-    }
-    "##;
+    }"##;
 
     for (output_whitelist, buffer_whitelist, expected_output, expected_buffer) in [
         (
@@ -882,7 +1007,7 @@ fn test_filters_both() {
 71=""
 71+="kuroco_infrastructur2e.pdf"
 "##,
-            r#"{"errors":[],"messages":[],"query":"サポート体制はどのようになっていますか？","simplified_query":"サポート体制はどのようになっていますか？","args":{"proper_nouns":"None","categories":["Documents-JA2"],"optimized_query":"support system overview"},"fallback_args":{"vector_search":"support system overview"},"server_timings":[{"key":"AI_completions","cached":{"cached":true},"dur":{"dur":20}},{"key":"AI_optimize_query","cached":{"cached":true},"dur":{"dur":11}},{"key":"AI_embeddings","cached":{"cached":true},"dur":{"dur":18}},{"key":"AI_embeddings","cached":{"cached":true},"dur":{"dur":2}}],"contents_length":{"contents_length":94911},"list":[{"subject":"kuroco_infrastructure1.pdf","slug":"kuroco-app-files-sheets-en-kuroco_infrastructure-pdf","topics_group_id":{"topics_group_id":8},"contents_type_nm":"Documents-JA2","vector_distance":{"vector_distance":0.625},"contents":"contents"},{"subject":"kuroco_infrastructur2e.pdf","slug":"kuroco-app-files-sheets-en-kuroco_infrastructure-pdf","topics_group_id":{"topics_group_id":8},"contents_type_nm":"Documents-JA2","vector_distance":{"vector_distance":0.625},"contents":"contents"}]}"#
+            serde_json::from_str::<Value>(input).unwrap()
         ),
         (
             // Full output, filtered buffer
@@ -983,7 +1108,12 @@ fn test_filters_both() {
 81=""
 81+="contents"
 "##,
-            r#"{"list":[{"subject":"kuroco_infrastructure1.pdf"},{"subject":"kuroco_infrastructur2e.pdf"}]}"#
+            json!({
+                "list":[
+                    {"subject":"kuroco_infrastructure1.pdf"},
+                    {"subject":"kuroco_infrastructur2e.pdf"}
+                ]
+            })
         ),
     ] {
         let ref_index_generator = RefIndexGenerator::new();
@@ -1020,7 +1150,7 @@ fn test_filters_both() {
         let buffered_data = json_stream_parser.get_buffered_data();
         assert!(buffered_data.is_some());
         let buffered_data = buffered_data.unwrap();
-        assert_eq!(buffered_data.to_string().as_str(), expected_buffer);
+        assert_eq!(buffered_data, &expected_buffer);
     }
 }
 

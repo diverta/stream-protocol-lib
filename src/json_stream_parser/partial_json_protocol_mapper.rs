@@ -78,6 +78,11 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         current_node.node_ignore_output = true;
                     }
                 }
+            }
+        }
+        if !self.is_ignoring_current_buffer() {
+            if let Some(current_node) = self.node_map.get_mut(&self.current_node_idx) {
+                // If not ignoring still, confirm filters now
                 if let Some(buffer_whitelist) = self.parser_options.filter.buffer_whitelist.as_ref() {
                     if !self.key_path.match_list(buffer_whitelist.iter().collect(), true) {
                         current_node.node_ignore_buffer = true;
@@ -134,6 +139,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
         idx: usize,
         operator: &'static str,
         mut output_value: Option<Rc<Value>>,
+        buffer_value: Option<Rc<Value>>,
         move_up_value: Option<Rc<Value>>,
         new_node_idx: usize // This may be different from idx which represents the object new node is being attached to
     ) -> Result<Option<String>, ParseError> {
@@ -141,7 +147,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
         let buffer_value = if self.node_map.get(&new_node_idx).map(|node| node.node_ignore_buffer).unwrap_or(false) {
             None
         } else {
-            output_value.as_ref()
+            buffer_value.as_ref()
         };
         self.on_event_value_completed(buffer_value.map(|val| Rc::clone(&val)));
         if self.node_map.get(&new_node_idx).map(|node| node.node_ignore_output).unwrap_or(false) {
@@ -303,6 +309,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         self.current_node_idx,
                         operator,
                         output_value.as_ref().map(|v| Rc::clone(&v)),
+                        output_value.as_ref().map(|v| Rc::clone(&v)),
                         output_value,
                         self.current_node_idx,
                     );
@@ -321,6 +328,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                         parent_idx,
                         OPERATOR_ASSIGN,
                         output_value.as_ref().map(|v| Rc::clone(&v)),
+                        output_value.as_ref().map(|v| Rc::clone(&v)),
                         output_value,
                         current_idx
                     );
@@ -338,9 +346,15 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 if potential_key.is_some() {
                                     // The key exists => we are returning from the object value
                                     let key = potential_key.take().unwrap(); // Get the key, emptying the node's parameter
-                                    let (save_idx, save_operator, save_value): (usize, &str, Option<Rc<Value>>) = match current_status {
+                                    let (
+                                        save_idx,
+                                        save_operator,
+                                        save_value_output,
+                                        save_value_buffer
+                                    ): (usize, &str, Option<Rc<Value>>, Option<Rc<Value>>) = match current_status {
                                         // The way to write the row, however, depends on the type
                                         // Basic types, we have to append to the parent object itself
+                                        // Except for the value we buffer, in which case it's straightforward
                                         Status::Null(_)|
                                         Status::Bool(_) |
                                         Status::Number(_) => {
@@ -348,7 +362,8 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                             (
                                                 parent_idx,
                                                 OPERATOR_APPEND,
-                                                Some(Rc::new(json!({key: value})))
+                                                Some(Rc::new(json!({key: value}))),
+                                                Some(Rc::clone(&value))
                                             )
                                         },
                                         // For strings, we have already initialized it, so append to self
@@ -356,22 +371,18 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                             (
                                                 current_idx,
                                                 OPERATOR_APPEND,
-                                                if let Some(value) = output_value.as_ref() {
-                                                    Some(Rc::clone(value))
-                                                } else {
-                                                    // Value might not be present if flushed
-                                                    None
-                                                }
+                                                output_value.as_ref().map(|v| Rc::clone(v)), // Value might not be present if flushed
+                                                output_value.as_ref().map(|v| Rc::clone(v)), // Value might not be present if flushed
                                             )
                                         },
                                         _ => unreachable!("All base types are covered, aren't they?")
                                     };
-                                    // TODO : diverging with previous logic of Number type (within object) => check it
                                     let saved_value = self.save_value(
                                         save_idx,
                                         save_operator,
-                                        save_value.as_ref().map(|v| Rc::clone(&v)),
-                                        save_value,
+                                        save_value_output.as_ref().map(|v| Rc::clone(&v)),
+                                        save_value_buffer,
+                                        save_value_output,
                                         current_idx
                                     );
                                     self.current_status = Status::Object(StatusObject {
@@ -428,6 +439,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                     save_idx,
                                     save_operator,
                                     save_value.as_ref().map(|v| Rc::clone(&v)),
+                                    save_value.as_ref().map(|v| Rc::clone(&v)),
                                     save_value,
                                     current_idx
                                 );
@@ -452,6 +464,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 let saved_value = self.save_value(
                                     0, // irrelevant here
                                     OPERATOR_APPEND, // irrelevant here
+                                    output_value.as_ref().map(|v| Rc::clone(v)),
                                     output_value,
                                     None,
                                     0, // irrelevant here
@@ -465,6 +478,7 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 let saved_value = self.save_value(
                                     0, // irrelevant here
                                     OPERATOR_APPEND, // irrelevant here
+                                    output_value.as_ref().map(|v| Rc::clone(v)),
                                     output_value,
                                     None,
                                     0, // irrelevant here
