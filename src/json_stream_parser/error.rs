@@ -11,6 +11,12 @@ impl ParseError {
     }
 }
 
+impl ToString for ParseError {
+    fn to_string(&self) -> String {
+        format!("ParseError: {}", self.msg)
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct LogicalError {

@@ -113,6 +113,13 @@ where F: Fn(Option<Rc<Value>>) -> ()
     pub fn take_buffered_data(&mut self) -> Option<Value> {
         self.mapper.take_buffered_data()
     }
+
+    /// This method needs to be called upon ending the parsing to ensure properly handling the lingering state
+    /// One such case is when the json is a single number - because of the absence of a character indicating the end of the number,
+    /// the parser cannot properly buffer it unless finish() is called
+    pub fn finish(&mut self) {
+        self.mapper.finish();
+    }
 }
 
 #[cfg(feature = "async")]

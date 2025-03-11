@@ -44,7 +44,7 @@ impl StatusTrait for StatusString {
                     let final_string = String::from_utf8(out_vec)?;
                     return Ok(Some((Some(Value::String(final_string)), Some(Status::Done(super::StatusDone::default())))))
                 } else {
-                    // Empty string : may happen if a flush has occured right before the end
+                    // Empty string : may also happen if a flush has occured right before the end
                     return Ok(Some((None, Some(Status::Done(super::StatusDone::default())))))
                 }
             },

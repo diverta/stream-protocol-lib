@@ -70,4 +70,22 @@ impl StatusTrait for StatusNumber {
         let _ = self.add_char(c); // For initialization
         self
     }
+    
+    fn finish(&mut self) -> Result<Option<Value>, ParseError> {
+        if self.match_so_far.len() > 0 {
+            let mut out_vec = Vec::<u8>::new(); // To be swapped with current data, since that one is no longer needed after this return
+            std::mem::swap(&mut self.match_so_far, &mut out_vec);
+            serde_json::from_slice::<Number>(&out_vec)
+                .map(|n| Some(n.into()))
+                .map_err(|_|
+                    ParseError::new(
+                        format!("Error parsing serde number on finish : {}",
+                            String::from_utf8_lossy(&self.match_so_far)
+                        )
+                    )
+                )
+        } else {
+            Ok(None)
+        }
+    }
 }

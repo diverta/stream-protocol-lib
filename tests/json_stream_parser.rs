@@ -244,6 +244,22 @@ fn test_unit() {
 10=""
 10+="single_child"
             "#.trim()
+        ),
+        (
+            // Test 16
+            // Empty object & array
+            r#"{"empty_obj_1":{},"empty_obj_2" : { },"empty_arr_1":[],"empty_arr_2" : [ ]}"#,
+            r#"
+2={}
+2+={"empty_obj_1":"$ke$4"}
+4={}
+2+={"empty_obj_2":"$ke$6"}
+6={}
+2+={"empty_arr_1":"$ke$8"}
+8=[]
+2+={"empty_arr_2":"$ke$10"}
+10=[]
+            "#.trim()
         )
     ];
 
@@ -1155,7 +1171,128 @@ fn test_filters_both() {
 }
 
 #[test]
-fn test_edge_case_1() {
+fn test_edge_cases() {
+    for (input, expected_output, expected_buffer) in [
+        (
+            r#"{
+                "a_string": "abcd",
+                "a_null": null,
+                "an_int": 1234,
+                "a_float": -2e-5,
+                "a_bool_t": true,
+                "a_bool_f": false,
+                "an_empty_string": "",
+                "an_empty_arr": [],
+                "an_empty_obj": {}
+            }"#,
+            r#"
+                0={}
+                0+={"a_string":"$ke$2"}
+                2=""
+                2+="abcd"
+                0+={"a_null":null}
+                0+={"an_int":1234}
+                0+={"a_float":-0.00002}
+                0+={"a_bool_t":true}
+                0+={"a_bool_f":false}
+                0+={"an_empty_string":"$ke$14"}
+                14=""
+                0+={"an_empty_arr":"$ke$16"}
+                16=[]
+                0+={"an_empty_obj":"$ke$18"}
+                18={}
+            "#,
+            json!({
+                "a_string": "abcd",
+                "a_null": null,
+                "an_int": 1234,
+                "a_float": -2e-5,
+                "a_bool_t": true,
+                "a_bool_f": false,
+                "an_empty_string": "",
+                "an_empty_arr": [],
+                "an_empty_obj": {}
+            })
+        ),
+        (
+            r#""""#, // Empty string as root
+            r#"0="""#,
+            json!("")
+        ),
+        (
+            r#""abc""#,
+            r#"
+                0=""
+                0+="abc"
+            "#,
+            json!("abc")
+        ),
+        (
+            r#"true"#,
+            r#"
+                0=true
+            "#,
+            json!(true)
+        ),
+        (
+            r#"false"#,
+            r#"
+                0=false
+            "#,
+            json!(false)
+        ),
+        (
+            r#"-5e-2"#,
+            r#"
+                0=-0.05
+            "#,
+            json!(-0.05)
+        ),
+        (
+            r#"null"#,
+            r#"
+                0=null
+            "#,
+            json!(null)
+        )
+    ] {
+        let ref_index_generator = RefIndexGenerator::new();
+    
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+            ref_index_generator,
+            0,
+            true,
+            ParserOptions::default()
+        );
+        let mut line_counter = 0;
+        let expected_line_arr: Vec<&str> = expected_output
+            .trim()
+            .split('\n')
+            .map(|v| v.trim())
+            .collect();
+        for byte in input.as_bytes() {
+            let output = json_stream_parser.add_char(&byte);
+            assert!(output.is_ok());
+            let output = output.unwrap();
+            if let Some(output) = output {
+                print!("> Out: {}", output);
+                // Sometimes output contains multiple rows
+                let output_row_arr: std::str::Split<'_, char> = output.trim().split('\n');
+                for output_row in output_row_arr {
+                    assert_eq!(expected_line_arr[line_counter], output_row);
+                    line_counter += 1;
+                }
+            }
+        }
+        json_stream_parser.finish();
+    
+        // Testing buffered data
+        let buffered_data = json_stream_parser.get_buffered_data();
+        assert!(buffered_data.is_some());
+        println!("Buffer: {}", buffered_data.unwrap()); // For debugging
+        println!("Expected: {}", expected_buffer);
+        assert_eq!(buffered_data.unwrap(), &expected_buffer);
+    }
 }
 
 #[test]

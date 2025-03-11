@@ -25,8 +25,8 @@ impl StatusTrait for StatusNone {
                 return Ok(Some((Some(Value::String(String::new())), Some(Status::String(StatusString::new())))))
             },
             b'n' => {
-                // Beginning of a new value as null
-                return Ok(Some((Some(Value::Null), Some(Status::Null(StatusNull::new().with_char(c))))))
+                // Beginning of a new value as null : output only at the last character, not now
+                return Ok(Some((None, Some(Status::Null(StatusNull::new().with_char(c))))))
             },
             b't' | b'f' => {
                 // Beginning of a new value as Boolean

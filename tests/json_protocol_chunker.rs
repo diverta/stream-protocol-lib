@@ -7,6 +7,16 @@ fn test_json_chunk_iter() {
 
     let json_to_test = [
         (
+            json!({"empty_obj":{},"empty_arr":[]}),
+            [
+                r#"0={}"#,
+                r#"0+={"empty_obj":"$ke$1"}"#,
+                r#"1={}"#,
+                r#"0+={"empty_arr":"$ke$2"}"#,
+                r#"2=[]"#,
+            ].to_vec()
+        ),
+        (
             json!({"key1": "value_1", "key2":"value_2"}),
             [
                 r#"0={}"#,

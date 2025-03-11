@@ -12,7 +12,7 @@ pub(crate) enum SubStatusObject {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct StatusObject {
-    pub(crate) substatus: SubStatusObject,
+    pub(crate) substatus: SubStatusObject
 }
 
 impl StatusTrait for StatusObject {
@@ -39,17 +39,13 @@ impl StatusTrait for StatusObject {
                             self.substatus = SubStatusObject::BeforeKV(true);
                             return Ok(None)
                         } else {
-                            return Err(ParseError::new("Double comma inside object"))
+                            return Err(ParseError::new("Extra comma inside object"))
                         }
                     },
                     b'}' => {
-                        if !comma_matched {
-                            // Closing the object
-                            self.substatus = SubStatusObject::BeforeKV(true);
-                            return Ok(Some((None, Some(Status::Done(super::StatusDone::default())))));
-                        } else {
-                            return Err(ParseError::new("Closing bracket after a comma in an object"))
-                        }
+                        // Closing the object
+                        self.substatus = SubStatusObject::BeforeKV(true);
+                        return Ok(Some((None, Some(Status::Done(super::StatusDone::default())))));
                     },
                     _ => return Err(ParseError::new("Key double quote expected in object"))
                 }

@@ -372,7 +372,10 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                                 current_idx,
                                                 OPERATOR_APPEND,
                                                 output_value.as_ref().map(|v| Rc::clone(v)), // Value might not be present if flushed
-                                                output_value.as_ref().map(|v| Rc::clone(v)), // Value might not be present if flushed
+                                                Some(output_value.as_ref().map(|v|
+                                                    Rc::clone(v))
+                                                    .unwrap_or(Rc::new(Value::String(String::new()))
+                                                )), // For the buffer, a String value should always be initialized, at least as empty string
                                             )
                                         },
                                         _ => unreachable!("All base types are covered, aren't they?")
@@ -404,7 +407,12 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 }
                             },
                             node::NodeType::Array(_) => {
-                                let (save_idx, save_operator, save_value): (usize, &str, Option<Rc<Value>>) = match current_status {
+                                let (
+                                    save_idx,
+                                    save_operator,
+                                    output_value,
+                                    buffer_value
+                                    ): (usize, &str, Option<Rc<Value>>, Option<Rc<Value>>) = match current_status {
                                     // The way to write the row, however, depends on the type
                                     // Basic types, we have to append to the parent object itself
                                     Status::Null(_)|
@@ -414,23 +422,24 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                         (
                                             parent_idx,
                                             OPERATOR_APPEND,
+                                            Some(Rc::clone(&value)),
                                             Some(Rc::clone(&value))
                                         )
                                     },
-                                    // For strings, we have already initialized it, so append to self
                                     Status::String(_) => {
                                         (
                                             current_idx,
                                             OPERATOR_APPEND,
-                                            if let Some(value) = output_value.as_ref() {
-                                                if value.as_str().unwrap().len() > 0 {
-                                                    Some(Rc::clone(&value))
+                                            // For output, it has already been initialized, so we should not add output if empty
+                                            output_value.as_ref().and_then(|v| {
+                                                if v.as_str().unwrap().len() > 0 {
+                                                    Some(Rc::clone(&v))
                                                 } else {
                                                     None
                                                 }
-                                            } else {
-                                                None
-                                            }
+                                            }),
+                                            // For buffer, however, we never want None, as it will buffer the empty string as null
+                                            Some(output_value.unwrap_or(Rc::new(Value::String(String::new()))))
                                         )
                                     },
                                     _ => unreachable!("All base types are covered, aren't they?")
@@ -438,9 +447,9 @@ where F: Fn(Option<Rc<Value>>) -> ()
                                 let saved_value = self.save_value(
                                     save_idx,
                                     save_operator,
-                                    save_value.as_ref().map(|v| Rc::clone(&v)),
-                                    save_value.as_ref().map(|v| Rc::clone(&v)),
-                                    save_value,
+                                    output_value.as_ref().map(|v| Rc::clone(&v)),
+                                    buffer_value,
+                                    output_value,
                                     current_idx
                                 );
                                 self.current_status = Status::Array(StatusArray { comma_matched: status_done.comma_matched });
@@ -769,5 +778,19 @@ where F: Fn(Option<Rc<Value>>) -> ()
 
     pub fn set_options(&mut self, parser_options: ParserOptions) {
         self.parser_options = parser_options;
+    }
+
+    /// Call this method when all data has been sent. There might be lingering state
+    pub fn finish(&mut self) {
+        match self.current_status.finish() {
+            Ok(final_value) => {
+                if let Some(final_value) = final_value {
+                    self.on_event_value_completed(Some(Rc::new(final_value)));
+                }
+            },
+            Err(err) => {
+                log::error!("{}", err.to_string())
+            },
+        }
     }
 }

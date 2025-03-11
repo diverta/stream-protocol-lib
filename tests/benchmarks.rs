@@ -11,7 +11,7 @@ use test::Bencher;
 
 #[bench]
 fn bench1(b: &mut Bencher) {
-    let mut file = fs::File::open("tests/benchmarks/64kb.json").unwrap();
+    let mut file = fs::File::open("tests/benchmarks/512kb.json").unwrap();
     let mut input = String::new();
     file.read_to_string(&mut input).unwrap();
     let input_json: Value = serde_json::from_str(&input).unwrap();
@@ -23,9 +23,13 @@ fn bench1(b: &mut Bencher) {
             true,
             ParserOptions::default()
         );
+        let mut c = 0;
         for byte in input.as_bytes() {
             let output = json_stream_parser.add_char(&byte);
-            assert!(output.is_ok());
+            if let Err(output_err) = output {
+                panic!("Error output at byte {}: {:?}", c, output_err)
+            }
+            c += 1;
         }
         let buffered_data = json_stream_parser.get_buffered_data();
         assert!(buffered_data.is_some());

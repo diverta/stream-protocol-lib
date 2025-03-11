@@ -27,7 +27,7 @@ impl StatusTrait for StatusArray {
                 return Ok(None)
             },
             (true, b',') => {
-                return Err(ParseError::new("Double comma inside array"))
+                return Err(ParseError::new("Extra comma inside array"))
             },
             (true, b'"') => {
                 // Beginning of a new value as a String

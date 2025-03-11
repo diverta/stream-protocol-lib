@@ -39,6 +39,10 @@ pub(crate) trait StatusTrait {
     fn flush(&mut self) -> Option<Value>; // Returns partial buffer of this status as JsonValue. If string, it will be valid (partial bytes are kept)
     // Helper for initialization with character
     fn with_char(self, c: &u8) -> Self;
+    // If a status has a lingering state to handle (such as updating the buffer), it can optionally implement the finishing processing
+    fn finish(&mut self) -> Result<Option<Value>, ParseError> {
+        Ok(None)
+    }
 }
 
 /// A StatusTrait wrapper for each Status for convenience
@@ -76,5 +80,18 @@ impl StatusTrait for Status {
     fn with_char(mut self, c: &u8) -> Self {
         let _ = self.add_char(c); // For initialization
         self
+    }
+
+    fn finish(&mut self) -> Result<Option<Value>, ParseError> {
+        match self {
+            Status::None(s) => s.finish(),
+            Status::Null(s) => s.finish(),
+            Status::Bool(s) => s.finish(),
+            Status::Number(s) => s.finish(),
+            Status::String(s) => s.finish(),
+            Status::Array(s) => s.finish(),
+            Status::Object(s) => s.finish(),
+            Status::Done(_) => { unreachable!("Done status must not be final") }
+        }
     }
 }
