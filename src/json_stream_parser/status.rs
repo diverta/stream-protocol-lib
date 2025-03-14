@@ -10,17 +10,17 @@ use status_string::StatusString;
 
 use super::error::ParseError;
 
-pub(crate) mod status_none;
-pub(crate) mod status_array;
-pub(crate) mod status_bool;
-pub(crate) mod status_null;
-pub(crate) mod status_number;
-pub(crate) mod status_object;
-pub(crate) mod status_string;
-pub(crate) mod status_done;
+pub mod status_none;
+pub mod status_array;
+pub mod status_bool;
+pub mod status_null;
+pub mod status_number;
+pub mod status_object;
+pub mod status_string;
+pub mod status_done;
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Status {
+pub enum Status {
     None(StatusNone), // Typically at the very first iteration, when the root object is still undefined
     Null(StatusNull),
     Bool(StatusBool),

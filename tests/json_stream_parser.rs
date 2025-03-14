@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use test_log::test;
 use std::{cell::RefCell, rc::Rc, str::FromStr};
 
-use stream_protocol_lib::{json_stream_parser::{parser_options::ParserOptions, JsonStreamParser, ParserEvent}, ref_index_generator::RefIndexGenerator};
+use stream_protocol_lib::{json_stream_parser::{parser_options::ParserOptions, parser_output::{stream_protocol_output::StreamProtocolOutput, ParserOutputTrait}, JsonStreamParser, ParserEvent}, ref_index_generator::RefIndexGenerator};
 
 #[test]
 fn test_unit() {
@@ -270,11 +270,12 @@ fn test_unit() {
         ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
         let cnt = ref_index_generator.generate(); // 2
         
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
             ref_index_generator,
             cnt,
             true,
-            ParserOptions::default()
+            ParserOptions::default(),
+            StreamProtocolOutput::new()
         );
 
         let expected_line_arr: Vec<&str> = expected_lines
@@ -312,11 +313,12 @@ fn test_flush_regular() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
         ref_index_generator,
         cnt,
         false,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     );
     
     let input = r#"{"key":"Some longer sentence"}"#;
@@ -359,11 +361,12 @@ fn test_flush_inbetween_utf8_boundaries() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
         ref_index_generator,
         cnt,
         false,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     );
     
     let input = r#""東京都飯田橋""#;
@@ -409,11 +412,12 @@ fn test_flush_for_object_keys() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
     
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
         ref_index_generator,
         cnt,
         false,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     );
     let inputs = [
         r#"{""#,
@@ -458,11 +462,12 @@ fn test_gpt() {
     ref_index_generator.generate(); // 1 : generate once to simulate being in the middle
     let cnt = ref_index_generator.generate(); // 2
 
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
         ref_index_generator,
         cnt,
         false,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     );
 
     // Testing events
@@ -614,7 +619,8 @@ fn test_gemini() {
         ref_index_generator,
         0,
         true,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     )
         .with_event_handler(ParserEvent::OnElementEnd, "*.candidates.*.content.parts.*.text".to_string(), Box::new(move |value: Option<Rc<Value>>| {
             assert!(value.is_some());
@@ -660,11 +666,12 @@ fn test_flush_buffer() {
     let input = input.replace("\n", ""); // Use spaces previously for readability, but remove now to make a valid JSON
     let ref_index_generator = RefIndexGenerator::new();
 
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
         ref_index_generator,
         0,
         true,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     );
     let mut byte_counter = 0usize;
     for byte in input.as_bytes() {
@@ -790,11 +797,12 @@ fn test_filter_output() {
         )
     ] {
         let ref_index_generator = RefIndexGenerator::new();
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
             ref_index_generator,
             0,
             true,
-            ParserOptions::new_with_filter_output_whitelist(vec_whitelist)
+            ParserOptions::new_with_filter_output_whitelist(vec_whitelist),
+            StreamProtocolOutput::new()
         );
         let mut line_counter = 0;
         let expected_line_arr: Vec<&str> = expected_lines
@@ -936,11 +944,12 @@ fn test_filter_buffer() {
         )
     ] {
         let ref_index_generator = RefIndexGenerator::new();
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
             ref_index_generator,
             0,
             true,
-            ParserOptions::new_with_filter_buffer_whitelist(vec_whitelist)
+            ParserOptions::new_with_filter_buffer_whitelist(vec_whitelist),
+            StreamProtocolOutput::new()
         );
         let mut line_counter = 0;
         let expected_line_arr: Vec<&str> = expected_output
@@ -1133,14 +1142,15 @@ fn test_filters_both() {
         ),
     ] {
         let ref_index_generator = RefIndexGenerator::new();
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
             ref_index_generator,
             0,
             true,
             ParserOptions::new_with_filter_output_buffer_whitelist(
                 output_whitelist,
                 buffer_whitelist
-            )
+            ),
+            StreamProtocolOutput::new()
         );
         let mut line_counter = 0;
         for byte in input.as_bytes() {
@@ -1258,11 +1268,12 @@ fn test_edge_cases() {
     ] {
         let ref_index_generator = RefIndexGenerator::new();
     
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
             ref_index_generator,
             0,
             true,
-            ParserOptions::default()
+            ParserOptions::default(),
+            StreamProtocolOutput::new()
         );
         let mut line_counter = 0;
         let expected_line_arr: Vec<&str> = expected_output
@@ -1275,7 +1286,6 @@ fn test_edge_cases() {
             assert!(output.is_ok());
             let output = output.unwrap();
             if let Some(output) = output {
-                print!("> Out: {}", output);
                 // Sometimes output contains multiple rows
                 let output_row_arr: std::str::Split<'_, char> = output.trim().split('\n');
                 for output_row in output_row_arr {
@@ -1289,8 +1299,6 @@ fn test_edge_cases() {
         // Testing buffered data
         let buffered_data = json_stream_parser.get_buffered_data();
         assert!(buffered_data.is_some());
-        println!("Buffer: {}", buffered_data.unwrap()); // For debugging
-        println!("Expected: {}", expected_buffer);
         assert_eq!(buffered_data.unwrap(), &expected_buffer);
     }
 }
@@ -1334,11 +1342,12 @@ fn test_gemini2() {
       }"#;
     let ref_index_generator = RefIndexGenerator::new();
 
-    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+    let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
         ref_index_generator,
         0,
         true,
-        ParserOptions::default()
+        ParserOptions::default(),
+        StreamProtocolOutput::new()
     );
     for byte in input.as_bytes() {
         let output = json_stream_parser.add_char(&byte);

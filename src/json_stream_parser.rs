@@ -1,7 +1,8 @@
 use derivative::Derivative;
 use error::ParseError;
 use parser_options::ParserOptions;
-use partial_json_protocol_mapper::PartialJsonProtocolMapper;
+use parser_output::ParserOutputTrait;
+use partial_json_mapper::PartialJsonMapper;
 use serde_json::Value;
 use status::{Status, StatusTrait};
 
@@ -9,10 +10,11 @@ use crate::{byte_to_char, ref_index_generator::RefIndexGenerator};
 
 pub(crate) mod error;
 //pub(crate) mod json_tree;
-pub(crate) mod partial_json_protocol_mapper;
+pub(crate) mod partial_json_mapper;
 pub(crate) mod status;
 
 pub mod parser_options;
+pub mod parser_output;
 
 use std::rc::Rc;
 #[cfg( feature = "async" )] use std::{io::Error, task::Poll};
@@ -20,8 +22,8 @@ use std::rc::Rc;
 #[cfg( feature = "async" )] use pin_project::pin_project;
 #[cfg( feature = "async" )]
 #[pin_project]
-pub struct JsonStreamParser<W, F> {
-    mapper: PartialJsonProtocolMapper<F>,
+pub struct JsonStreamParser<W, F, O> {
+    mapper: PartialJsonMapper<F, O>,
     current_status: Status,
     char_pos: usize,
     #[pin]
@@ -31,9 +33,9 @@ pub struct JsonStreamParser<W, F> {
 #[cfg(not(feature = "async" ))]
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct JsonStreamParser<F> {
+pub struct JsonStreamParser<F, O> {
     #[derivative(Debug="ignore")]
-    mapper: PartialJsonProtocolMapper<F>,
+    mapper: PartialJsonMapper<F, O>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -43,21 +45,25 @@ pub enum ParserEvent {
 }
 
 #[cfg( not(feature = "async") )]
-impl<F> JsonStreamParser<F>
-where F: Fn(Option<Rc<Value>>) -> ()
+impl<F, O> JsonStreamParser<F, O>
+where
+    F: Fn(Option<Rc<Value>>) -> (),
+    O: ParserOutputTrait
 {
     pub fn new(
         ref_index_generator: RefIndexGenerator,
         current_node_index: usize,
         enable_buffering: bool,
         parser_options: ParserOptions,
-    ) -> JsonStreamParser<F> {
+        parser_output: O
+    ) -> JsonStreamParser<F, O> {
         JsonStreamParser {
-            mapper: PartialJsonProtocolMapper::new(
+            mapper: PartialJsonMapper::new(
                 ref_index_generator,
                 current_node_index,
-                enable_buffering,   
-                parser_options
+                enable_buffering,
+                parser_options,
+                parser_output
             )
         }
     }
@@ -123,17 +129,25 @@ where F: Fn(Option<Rc<Value>>) -> ()
 }
 
 #[cfg(feature = "async")]
-impl<W, F> JsonStreamParser<W, F>
+impl<W, F> JsonStreamParser<W, F, O>
 where
     W: AsyncWrite,
-    F: Fn(Option<Rc<Value>>) -> ()
+    F: Fn(Option<Rc<Value>>) -> (),
+    O: ParserOutputTrait
 {
-    pub fn new(ref_index_generator: RefIndexGenerator, writer: W, current_node_index: usize) -> JsonStreamParser<W, F> {
+    pub fn new(
+        ref_index_generator: RefIndexGenerator,
+        writer: W,
+        current_node_index: usize,
+        parser_output: O
+        
+    ) -> JsonStreamParser<W, F, O> {
         JsonStreamParser {
-            mapper: PartialJsonProtocolMapper::new(ref_index_generator, current_node_index),
+            mapper: PartialJsonMapper::new(ref_index_generator, current_node_index),
             current_status: Status::new(),
             char_pos: 0,
-            writer
+            writer,
+            parser_output
         }
     }
 
@@ -176,10 +190,11 @@ where
 }
 
 #[cfg( feature = "async" )]
-impl<W, F> AsyncWrite for JsonStreamParser<W, F>
+impl<W, F> AsyncWrite for JsonStreamParser<W, F, O>
 where
     W: AsyncWrite,
-    F: Fn(Option<Rc<Value>>) -> ()
+    F: Fn(Option<Rc<Value>>) -> (),
+    O: ParserOutputTrait
 {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,

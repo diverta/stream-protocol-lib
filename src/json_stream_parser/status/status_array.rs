@@ -5,8 +5,8 @@ use crate::json_stream_parser::error::ParseError;
 use super::{Status, StatusBool, StatusDone, StatusNull, StatusNumber, StatusObject, StatusString, StatusTrait};
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct StatusArray {
-    pub(crate) comma_matched: bool,
+pub struct StatusArray {
+    pub comma_matched: bool,
 }
 
 impl StatusTrait for StatusArray {

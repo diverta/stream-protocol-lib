@@ -6,7 +6,7 @@ extern crate test;
 use std::{fs, io::Read, rc::Rc};
 
 use serde_json::Value;
-use stream_protocol_lib::{json_stream_parser::{parser_options::ParserOptions, JsonStreamParser}, ref_index_generator::RefIndexGenerator};
+use stream_protocol_lib::{json_stream_parser::{parser_options::ParserOptions, parser_output::{stream_protocol_output::StreamProtocolOutput, ParserOutputTrait}, JsonStreamParser}, ref_index_generator::RefIndexGenerator};
 use test::Bencher;
 
 #[bench]
@@ -17,11 +17,12 @@ fn bench1(b: &mut Bencher) {
     let input_json: Value = serde_json::from_str(&input).unwrap();
     b.iter(move || {
         let ref_index_generator = RefIndexGenerator::new();
-        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>> = JsonStreamParser::new(
+        let mut json_stream_parser: JsonStreamParser<Box<dyn Fn(Option<Rc<Value>>)>, _> = JsonStreamParser::new(
             ref_index_generator,
             0,
             true,
-            ParserOptions::default()
+            ParserOptions::default(),
+            StreamProtocolOutput::new()
         );
         let mut c = 0;
         for byte in input.as_bytes() {

@@ -6,7 +6,7 @@ use super::{Status, StatusDone, StatusTrait};
 
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct StatusBool {
+pub struct StatusBool {
     match_so_far: Vec<u8> // Contains incomplete sequence
 }
 

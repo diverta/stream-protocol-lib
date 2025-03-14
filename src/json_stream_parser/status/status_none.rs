@@ -5,7 +5,7 @@ use crate::json_stream_parser::error::ParseError;
 use super::{Status, StatusArray, StatusBool, StatusNull, StatusNumber, StatusObject, StatusString, StatusTrait};
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct StatusNone {
+pub struct StatusNone {
     
 }
 

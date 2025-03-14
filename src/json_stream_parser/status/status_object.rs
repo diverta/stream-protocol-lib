@@ -5,14 +5,14 @@ use crate::json_stream_parser::error::ParseError;
 use super::{Status, StatusArray, StatusBool, StatusNull, StatusNumber, StatusString, StatusTrait};
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum SubStatusObject {
+pub enum SubStatusObject {
     BeforeKV(bool), // true if ',' is matched
     BetweenKV(bool), // true if ':' is matched
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct StatusObject {
-    pub(crate) substatus: SubStatusObject
+pub struct StatusObject {
+    pub substatus: SubStatusObject
 }
 
 impl StatusTrait for StatusObject {

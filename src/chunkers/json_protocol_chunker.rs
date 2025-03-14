@@ -4,12 +4,14 @@ use futures::Stream;
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{ref_index_generator::RefIndexGenerator, STREAM_VAR_PREFIX};
+use crate::json_stream_parser::parser_output::stream_protocol_output::STREAM_VAR_PREFIX;
+use crate::ref_index_generator::RefIndexGenerator;
 
 use super::json_value_pointer::JsonValuePointer;
 
 const MAX_CHUNK_SETTINGS_INTERVAL: usize = 10_000; // Max duration (in ms) that we allow user to wait between each request
 
+/// This chunker chunks a Value (JSON) following the definition of the custom KurocoEdge JsonStream protocol
 pub struct JsonProtocolChunker {
     source: Value,
     idx_generator: RefIndexGenerator, // A shared, dynamic counter for new rows

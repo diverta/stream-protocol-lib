@@ -5,17 +5,17 @@ use crate::json_stream_parser::error::ParseError;
 use super::{Status, StatusTrait};
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct StatusString {
+pub struct StatusString {
     string_in_progress: Vec<u8>,
     escape: EscapeState,
     is_object_key: bool,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum EscapeState {
+pub enum EscapeState {
     None, // Not escaping
     Began, // After \ is detected
-    U(String) // UTF8 digits (up to 4)
+    UTF8(String) // UTF8 digits (up to 4)
 }
 
 impl StatusString {
@@ -88,13 +88,13 @@ impl StatusTrait for StatusString {
                         return Ok(None);
                     }
                     b'u' => { // Beginning of UTF8 capture
-                        self.escape = EscapeState::U(String::with_capacity(4));
+                        self.escape = EscapeState::UTF8(String::with_capacity(4));
                         return Ok(None);
                     }
                     _ => return Err("Invalid JSON escaped character".into())
                 }
             },
-            (EscapeState::U(digits_so_far), escaped_char) => {
+            (EscapeState::UTF8(digits_so_far), escaped_char) => {
                 match digits_so_far.len() {
                     0 | 1 | 2 => {
                         // Non-final character absorb

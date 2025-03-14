@@ -5,7 +5,7 @@ use crate::json_stream_parser::error::ParseError;
 use super::{Status, StatusTrait};
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct StatusNumber {
+pub struct StatusNumber {
     dot_matched: bool,
     match_so_far: Vec<u8> // Contains incomplete sequence
 }
